@@ -4,12 +4,12 @@ from typing import Literal, Callable
 from collections import deque
 
 from ActionIndex import ActionIndex
-from interfaces.PlannerOrchestraterInterface import PlannerOrchestraterInterface
-from interfaces.ModelInterface import ModelInterface
-from interfaces.PolicyInterface import PolicyInterface
-from interfaces.LearningInterface import LearningInterface
-from interfaces.PlannedLearningInterface import PlannedLearningInterface
-from interfaces.WorldInterface import WorldInterface
+from part_1.interfaces import PlannerOrchestraterInterface
+from part_1.interfaces.ModelInterface import ModelInterface
+from part_1.interfaces.PolicyInterface import PolicyInterface
+from part_1.interfaces import LearningInterface
+from part_1.interfaces import PlannedLearningInterface
+from part_1.interfaces import WorldInterface
 
 METHOD_TYPE = Literal["sarsa", "q_learning"]
 

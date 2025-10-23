@@ -1,4 +1,4 @@
-from interfaces.LearningInterface import LearningInterface
+from part_1.interfaces.LearningInterface import LearningInterface
 
 
 class PlannedLearningInterface(LearningInterface):

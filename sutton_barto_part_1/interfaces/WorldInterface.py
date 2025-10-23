@@ -1,7 +1,7 @@
 from pprint import pprint
 
-from interfaces.EncoderInterface import EncoderInterface
-from interfaces.PolicyInterface import PolicyInterface
+from part_1.interfaces.EncoderInterface import EncoderInterface
+from part_1.interfaces.PolicyInterface import PolicyInterface
 
 
 class WorldInterface:

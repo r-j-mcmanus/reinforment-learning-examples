@@ -1,5 +1,5 @@
-from interfaces.ModelInterface import ModelInterface
-from interfaces.PlannedLearningInterface import PlannedLearningInterface
+from part_1.interfaces.ModelInterface import ModelInterface
+from part_1.interfaces.PlannedLearningInterface import PlannedLearningInterface
 
 class PlannerOrchestraterInterface:
     """Allows for the leaner to have different planning methods using a model"""

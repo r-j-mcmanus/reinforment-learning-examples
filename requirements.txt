@@ -1,1 +1,7 @@
 numpy
+pandas
+matplotlib
+tqdm
+torch 
+torchvision
+gymnasium[classic_control]
