@@ -7,7 +7,7 @@ import torch.nn as nn
 
 
 from constants import *
-from DNQ.dqn import DQN
+from dqn import DQN
 
 class Policy:
     def __init__(self, dqn: nn.Module) -> None:

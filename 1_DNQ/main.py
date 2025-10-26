@@ -7,7 +7,7 @@ import torch
 import torch.optim as optim
 import torch.nn as nn
 
-from DNQ.dqn import DQN
+from dqn import DQNs
 from replay_memory import Memory, ReplayMemory
 from policy import Policy, EpsGreedyPolicy
 from optimise import apply_q_learning_step

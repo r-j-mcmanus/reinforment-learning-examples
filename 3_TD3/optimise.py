@@ -1,7 +1,6 @@
 import torch
 from torch import Tensor
 
-import numpy as np
 from replay_memory import Memory, Transition
 from constants import *
 from CriticNet import StabilisingCriticNet, TargetCriticNet
@@ -34,7 +33,7 @@ def apply_learning_step(memory: Memory, step: int, action_low: Tensor | None, ac
         # Predict next actions using the target polic
         next_actions = target_policy.noisy_forward(next_state_batch, action_low, action_high)
 
-        # find the state predicted state value for the stabilising critice from the current state 
+        # find the predicted state value for the stabilising critice from the current state 
         # and the predicted state value for the next state using the target network 
         predicted_state_action_values_1 = stabilising_critic_net_1(torch.cat([state_batch, action_batch], dim=1))
         predicted_state_action_values_2 = stabilising_critic_net_2(torch.cat([state_batch, action_batch], dim=1))

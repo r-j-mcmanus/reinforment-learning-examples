@@ -1,4 +1,4 @@
-from DNQ.dqn import DQN
+from dqn import DQN
 import torch.nn as nn
 
 

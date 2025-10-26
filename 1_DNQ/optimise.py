@@ -4,7 +4,6 @@ from torch.optim import Optimizer
 
 from replay_memory import Memory, Transition
 from constants import *
-from DNQ.dqn import DQN
 
 
 def apply_q_learning_step(memory: Memory, policy_net: nn.Module, target_net: nn.Module, optimizer: Optimizer):

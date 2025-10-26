@@ -51,7 +51,6 @@ class BaseNet(nn.Module):
         return action_grad
 
 
-
 class StabilisingCriticNet(BaseNet):
     def __init__(self, n_observations: int, actions_dimention: int):
         super().__init__(n_observations, actions_dimention)
