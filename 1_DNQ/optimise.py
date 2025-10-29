@@ -1,16 +1,16 @@
 import torch
 import torch.nn as nn
-from torch.optim import Optimizer
 
+from dqn import StabilisingCriticNet, TargetCriticNet
 from replay_memory import Memory, Transition
 from constants import *
 
 
-def apply_q_learning_step(memory: Memory, policy_net: nn.Module, target_net: nn.Module, optimizer: Optimizer):
-    """"""
+def apply_learning_step(memory: Memory, policy_net: StabilisingCriticNet, target_net: TargetCriticNet):
+    """Performs a single DQN learning step using a sampled batch from memory"""
 
     if len(memory) < BATCH_SIZE:
-        raise ValueError(f'memory {len(memory)} less than batch size {BATCH_SIZE}')
+        return
     
     transitions = memory.sample(BATCH_SIZE)
 
@@ -38,25 +38,25 @@ def apply_q_learning_step(memory: Memory, policy_net: nn.Module, target_net: nn.
     # sampled states.
     # We get reward from the policy_net for the action as gather will pick the 
     # accoiated value for each row given the action.
-    state_action_values = policy_net(state_batch).gather(1, action_batch)
 
-    # get the value from the target network
+    # Current Q-values from policy network
+    predicted_state_action_values = policy_net(state_batch).gather(1, action_batch.unsqueeze(1))
+    # predicted_state_action_values = state_batch[torch.arange(state_batch.size(0)), action_batch] # this brakes the computation graph and optimisation will not work
+
+    # get the Q-values from the target network
     next_state_values = torch.zeros(BATCH_SIZE, device=DEVICE) # if the state is final then there is no expected reward
     with torch.no_grad(): # calculation costs less as we tell pytorch we will not be optimising
         # get the expected state value from the target_net using the memory rewards
         next_state_values[non_final_mask] = target_net(non_final_next_states).max(1).values
+    
     # Compute the expected Q values from the target network
     expected_state_action_values = (next_state_values * GAMMA) + reward_batch
 
-    # Compute Huber loss which we aim to minimize
-    criterion = nn.SmoothL1Loss()
-    loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
+    # -> predicted_state_action_values
+    # | | | | ...
+    # r -> next_state_values
+    # if the nets were the real state_value function then
+    # predicted_state_action_values = r + next_state_values
 
-    optimizer.zero_grad() # removes previously found gradients
-    loss.backward() # computes the gradients of the loss with respect to all model parameters
-
-    # In-place gradient clipping at max abs value of 100
-    # prevents any gradient from becoming too large
-    torch.nn.utils.clip_grad_value_(policy_net.parameters(), 100)
-    # apply gradient decent using the optimizer
-    optimizer.step()
+    policy_net.optimise(predicted_state_action_values, expected_state_action_values)
+    target_net.soft_update(policy_net)

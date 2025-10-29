@@ -5,7 +5,7 @@ import torch.optim as optim
 
 from constants import *
 
-class BaseNet(nn.Module):
+class StateActionNet(nn.Module):
     def __init__(self, n_observations: int, actions_dimention: int):
         """A fully connected feed forward NN to model the state-value function.
 
@@ -51,28 +51,26 @@ class BaseNet(nn.Module):
         return action_grad
 
 
-
-class StabilisingCriticNet(BaseNet):
+class StabilisingCriticNet(StateActionNet):
     def __init__(self, n_observations: int, actions_dimention: int):
         super().__init__(n_observations, actions_dimention)
-        # by passing self.parameters, the optimiser knows which network is optimised
         self.optimizer = optim.AdamW(self.parameters(), lr=LEARNING_RATE, amsgrad=True)
 
-    def optimise(self, predicted_state_action_values: Tensor, expected_state_action_values: Tensor):
+    def optimise(self, predicted_state_action_values: Tensor, expected_state_action_values: Tensor, step: int):
         criterion = nn.SmoothL1Loss()
         loss = criterion(predicted_state_action_values, expected_state_action_values)
 
-        self.optimizer.zero_grad() # removes previously found gradients
-        loss.backward() # computes the gradients of the loss with respect to all model parameters
-
-        # In-place gradient clipping at max abs value of 100
-        # prevents any gradient from becoming too large
+        self.optimizer.zero_grad()
+        loss.backward() 
         torch.nn.utils.clip_grad_value_(self.parameters(), 100)
         # apply gradient decent using the optimizer
         self.optimizer.step()
 
+        if step % 100 == 0:
+            print(f'Citic loss {loss.item()}')
 
-class TargetCriticNet(BaseNet):
+
+class TargetCriticNet(StateActionNet):
     def __init__(self, n_observations: int, actions_dimention: int):
         super().__init__(n_observations, actions_dimention)
 
@@ -82,3 +80,4 @@ class TargetCriticNet(BaseNet):
         for key in stabilising_net_state_dict:
             target_net_state_dict[key] = stabilising_net_state_dict[key]*TAU + target_net_state_dict[key]*(1-TAU)
         self.load_state_dict(target_net_state_dict)
+

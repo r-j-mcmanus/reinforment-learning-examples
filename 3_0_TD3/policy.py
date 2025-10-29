@@ -12,6 +12,7 @@ from constants import *
 from CriticNet import StabilisingCriticNet
 
 
+
 class BasePolicyNet(nn.Module):
     def __init__(self, n_observations: int, actions_dimention: int):
         """A fully connected feed forward NN to model the policy function.
@@ -34,12 +35,13 @@ class BasePolicyNet(nn.Module):
         self.std_end = EXPLORATION_STD_END
         self.std_decay = EXPLORATION_STD_DECAY
 
+
     def forward(self, x: Tensor) -> Tensor:
         """Called with either a single observation of the enviroment to predict the best next action, or with batches during optimisation"""
         x = F.relu(self.layer_1(x))
         x = F.relu(self.layer_2(x))
-        return torch.tanh(self.layer_3(x))
-
+        return self.layer_3(x)
+    
     def noisy_actions(self, state: Tensor, env: Env):
         std = self.std_end + (self.std_start - self.std_end) * math.exp(-1. * self.steps_done / self.std_decay)
         self.steps_done += 1
@@ -51,13 +53,14 @@ class BasePolicyNet(nn.Module):
         action = action.clamp(torch.tensor(env.action_space.low, device=DEVICE),
                                 torch.tensor(env.action_space.high, device=DEVICE))
         return action
-
+    
 
 class StabilisingPolicyNet(BasePolicyNet):
     def __init__(self, n_observations: int, actions_dimention: int):
         super().__init__(n_observations, actions_dimention)
-        # by passing self.parameters, the optimiser knows which network is optimised
         self.optimizer = optim.AdamW(self.parameters(), lr=LEARNING_RATE, amsgrad=True)
+
+        # by passing self.parameters, the optimiser knows which network is optimised
 
     def optimise(self, critic_net: StabilisingCriticNet, state_batch: Tensor, step: int):
         """update actor policy using the sampled policy gradient"""
@@ -71,7 +74,8 @@ class StabilisingPolicyNet(BasePolicyNet):
         self.optimizer.step()
 
         if step % 100 == 0:
-            print(f"Actor Loss: {actor_loss.item():.4f}")
+            print(f"Actor Loss: {actor_loss.item()}")
+
 
 
 class TargetPolicyNet(BasePolicyNet):

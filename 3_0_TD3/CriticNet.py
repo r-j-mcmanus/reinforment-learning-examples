@@ -35,14 +35,13 @@ class BaseNet(nn.Module):
         # detach(): Ensures the new tensor is not connected to any previous computation graph.
         # requires_grad_(True): Tells PyTorch to track operations on this tensor so gradients can be computed with respect to it.
         action = action.clone().detach().requires_grad_(True)
-        state = state.clone().detach().requires_grad_(True)
         # This performs a forward pass through the critic network.
         # critic_net takes state and action as input and returns a scalar Q-value.
         # Since action has requires_grad=True, PyTorch builds a computation graph that links the output q_value to action
         q_value = self(torch.cat([state, action], dim=1))
         # This triggers backpropagation from q_value (a scalar) through the computation graph.
         # PyTorch computes the gradient of q_value with respect to all tensors that have requires_grad=True — in this case, action.
-        q_value.backward(torch.ones_like(q_value), retain_graph=True)
+        q_value.backward(torch.ones_like(q_value))
         # This retrieves the gradient of q_value with respect to action
         action_grad = action.grad
 
@@ -55,15 +54,14 @@ class BaseNet(nn.Module):
 class StabilisingCriticNet(BaseNet):
     def __init__(self, n_observations: int, actions_dimention: int):
         super().__init__(n_observations, actions_dimention)
-        # by passing self.parameters, the optimiser knows which network is optimised
         self.optimizer = optim.AdamW(self.parameters(), lr=LEARNING_RATE, amsgrad=True)
 
     def optimise(self, predicted_state_action_values: Tensor, expected_state_action_values: Tensor, step: int):
         criterion = nn.SmoothL1Loss()
         loss = criterion(predicted_state_action_values, expected_state_action_values)
 
-        self.optimizer.zero_grad() # removes previously found gradients
-        loss.backward() # computes the gradients of the loss with respect to all model parameters
+        self.optimizer.zero_grad()
+        loss.backward() 
         torch.nn.utils.clip_grad_value_(self.parameters(), 100)
         # apply gradient decent using the optimizer
         self.optimizer.step()
@@ -77,10 +75,6 @@ class TargetCriticNet(BaseNet):
         super().__init__(n_observations, actions_dimention)
 
     def soft_update(self, stabilising_net: StabilisingCriticNet):
-        """
-        Soft update target network:
-        θ_target = τ * θ_policy + (1 - τ) * θ_target
-        """
         stabilising_net_state_dict = stabilising_net.state_dict()
         target_net_state_dict = self.state_dict()
         for key in stabilising_net_state_dict:

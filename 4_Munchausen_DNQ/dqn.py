@@ -26,12 +26,20 @@ class DQN(nn.Module):
         x = F.relu(self.layer_2(x))
         return self.layer_3(x)
 
-    def greedy_action(self, state: Tensor) -> Tensor:
+    def eps_greedy_action(self, state: Tensor) -> Tensor:
         if random.random() < 0.5:
             return torch.tensor(random.choice(range(self._n_actions)), device=DEVICE)
         
-        action_distribution = self(state)
-        return torch.argmax(action_distribution)
+        return self.greedy_predict(state)
+
+    def greedy_predict(self, state: Tensor) -> Tensor:
+        with torch.no_grad():
+            action_distribution = self(state)
+        return torch.argmax(action_distribution, dim=1)
+    
+    def state_action_value(self, states: Tensor, actions: Tensor):
+        with torch.no_grad():
+            return self(states).gather(1, actions)
 
 
 class StabilisingDQN(DQN):
@@ -39,19 +47,23 @@ class StabilisingDQN(DQN):
         super().__init__(n_observations, actions_dimention)
         # by passing self.parameters, the optimiser knows which network is optimised
         self.optimizer = optim.AdamW(self.parameters(), lr=LEARNING_RATE, amsgrad=True)
+        self.count = 0
 
-    def optimise(self, predicted_state_action_values: Tensor, expected_state_action_values: Tensor):
+    def optimise(self, predicted_state_action_values: Tensor, expected_state_action_values: Tensor, step: int):
         criterion = nn.SmoothL1Loss()
         loss = criterion(predicted_state_action_values, expected_state_action_values)
 
         self.optimizer.zero_grad() # removes previously found gradients
         loss.backward() # computes the gradients of the loss with respect to all model parameters
 
-        # In-place gradient clipping at max abs value of 100
         # prevents any gradient from becoming too large
-        torch.nn.utils.clip_grad_value_(self.parameters(), 100)
+        torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=10)
         # apply gradient decent using the optimizer
         self.optimizer.step()
+
+        if self.count % 100 == 0:
+            print(f'Citic loss {loss.item()}')
+        self.count +=1 
 
 
 class TargetDQN(DQN):
