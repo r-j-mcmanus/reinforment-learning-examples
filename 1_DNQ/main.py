@@ -35,16 +35,16 @@ def run(env: Env):
 
     memory = ReplayMemory(10_000)
 
-    stabalising_critic_net = StabilisingCriticNet(n_observations, n_actions)
+    stabilising_critic_net = StabilisingCriticNet(n_observations, n_actions)
     target_critic_net = TargetCriticNet(n_observations, n_actions)
-    target_critic_net.load_state_dict(stabalising_critic_net.state_dict()) # insure initially equal
+    target_critic_net.load_state_dict(stabilising_critic_net.state_dict()) # insure initially equal
     
     for i_episode in range(num_episodes):
 
-        # randomly initialise the enviroment, get the corrisponding state
+        # randomly initialise the environment, get the corresponding state
         state, _ = env.reset()
         state = torch.tensor(state, dtype=torch.float32, device=DEVICE).unsqueeze(0)
-        # unsqueeze inserts a dimention into a tensor
+        # unsqueeze inserts a dimension into a tensor
         # e.g torch.unsqueeze(x, 1)
         # tensor([[ 1],
         #         [ 2],
@@ -53,10 +53,10 @@ def run(env: Env):
 
         for t in count():
             assert isinstance(state, Tensor)
-            action = stabalising_critic_net.eps_greedy_action(state, env)
+            action = stabilising_critic_net.eps_greedy_action(state, env)
 
             observation, reward, terminated, truncated, _ = env.step(action.item()) # gymnasium response to the action
-            # truncated = if the episode ended due to a time limit, step limit, or other artificial cutoff.
+            # truncated = if the episode ended due to a time limit, step limit, or other artificial cut off.
             # terminated = if the episode ended because the agent reached a terminal state
 
             reward = torch.Tensor([reward], device=DEVICE)
@@ -75,12 +75,11 @@ def run(env: Env):
             state = next_state
 
             # Perform one step of the optimization (on the policy network)
-            apply_learning_step(memory, stabalising_critic_net, target_critic_net)
+            apply_learning_step(memory, stabilising_critic_net, target_critic_net)
 
             if done:
                 print(f'episode {i_episode} step {t}')
                 episode_durations.append(t + 1)
-                # plot_durations()
                 break
     print(episode_durations)
 

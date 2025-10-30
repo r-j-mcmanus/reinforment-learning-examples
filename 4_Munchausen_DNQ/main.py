@@ -26,21 +26,19 @@ def run(env: Env):
     else:
         num_episodes = 500
 
+    # tracking how long the episode lasted
+    episode_durations = []
+
     state, _ = env.reset()
     n_observations = len(state)
     n_actions = env.action_space.n # type: ignore
 
-    memory = ReplayMemory(100_000)
+    memory = ReplayMemory(10_000)
     
-    # we use both a target net and a policy net to stabalise training
-    # this is as when training the policy network TODO
-    stabalising_net = StabilisingDQN(n_observations, n_actions)
+    stabilising_critic_net = StabilisingDQN(n_observations, n_actions)
     target_net = TargetDQN(n_observations, n_actions)
-    target_net.load_state_dict(stabalising_net.state_dict()) # insure initially equal
-
-    # tracking how long the episode lasted
-    episode_durations = []
-                
+    target_net.load_state_dict(stabilising_critic_net.state_dict()) # insure initially equal
+     
     for i_episode in range(num_episodes):
         state, _ = env.reset()
         state = torch.tensor(state, dtype=torch.float32, device=DEVICE).unsqueeze(0)
@@ -48,7 +46,7 @@ def run(env: Env):
         for step in count():
             assert isinstance(state, Tensor)
             
-            action = stabalising_net.greedy_predict(state)
+            action = stabilising_critic_net.eps_greedy_action(state, env)
 
             observation, reward, terminated, truncated, _ = env.step(action.item()) 
 
@@ -68,12 +66,11 @@ def run(env: Env):
             state = next_state
 
             # Perform one step of the optimization (on the policy network)
-            apply_learning_step(memory, UPDATE_DELAY, stabalising_net, target_net)
+            apply_learning_step(memory, step, stabilising_critic_net, target_net)
 
             if done:
                 print(f'episode {i_episode} step {step}')
                 episode_durations.append(step + 1)
-                # plot_durations()
                 break
     print(episode_durations)
 

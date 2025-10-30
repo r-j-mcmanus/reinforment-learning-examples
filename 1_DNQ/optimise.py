@@ -37,7 +37,7 @@ def apply_learning_step(memory: Memory, policy_net: StabilisingCriticNet, target
     # The (state index, action index) are how the function is accessed on the
     # sampled states.
     # We get reward from the policy_net for the action as gather will pick the 
-    # accoiated value for each row given the action.
+    # associated value for each row given the action.
 
     # Current Q-values from policy network
     predicted_state_action_values = policy_net(state_batch).gather(1, action_batch.unsqueeze(1))

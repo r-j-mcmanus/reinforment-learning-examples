@@ -28,7 +28,7 @@ class BaseNet(nn.Module):
         self.steps_done = 0
 
     def forward(self, x: Tensor) -> Tensor:
-        """Called with either a single observation of the enviroment to predict the best next action, or with batches during optimisation"""
+        """Called with either a single observation of the environment to predict the best next action, or with batches during optimisation"""
         x = F.relu(self.layer_1(x))
         x = F.relu(self.layer_2(x))
         return self.layer_3(x)
@@ -49,8 +49,8 @@ class BaseNet(nn.Module):
             return self(states).gather(1, actions)
 
 class StabilisingCriticNet(BaseNet):
-    def __init__(self, n_observations: int, actions_dimention: int):
-        super().__init__(n_observations, actions_dimention)
+    def __init__(self, n_observations: int, actions_dimension: int):
+        super().__init__(n_observations, actions_dimension)
         # by passing self.parameters, the optimiser knows which network is optimised
         # AdamW (a better version of Adam) is a modified gradient decent algorithm
         self.optimizer = optim.AdamW(self.parameters(), lr=LEARNING_RATE, amsgrad=True)
@@ -74,8 +74,8 @@ class StabilisingCriticNet(BaseNet):
 
 
 class TargetCriticNet(BaseNet):
-    def __init__(self, n_observations: int, actions_dimention: int):
-        super().__init__(n_observations, actions_dimention)
+    def __init__(self, n_observations: int, actions_dimension: int):
+        super().__init__(n_observations, actions_dimension)
 
     def soft_update(self, stabilising_net: StabilisingCriticNet):
         """

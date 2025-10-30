@@ -42,27 +42,41 @@ def _get_batch(memory: Memory) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
     return state_batch, action_batch, reward_batch, non_final_next_states, non_final_mask
 
 
-def _get_bootstrap_state_action_value(target_net: TargetDQN, state_batch: Tensor, action_batch: Tensor, reward_batch: Tensor, non_final_next_states: Tensor, 
-                                      non_final_mask: Tensor) -> Tensor:
-    next_expected_softmax = torch.zeros(BATCH_SIZE, device=DEVICE)
-    with torch.no_grad(): # calculation costs less as we tell pytorch we will not be optimising
-        expected_softmax = F.log_softmax(target_net(state_batch), dim=1).gather(1, action_batch.unsqueeze(1))
-        expected_softmax = torch.clamp(expected_softmax, min=MUNCHAUSEN_LOWER_BOUND)
+def _get_bootstrap_state_action_value(target_net: TargetDQN, state_batch: Tensor, action_batch: Tensor, reward_batch: Tensor, non_final_next_states: Tensor, non_final_mask: Tensor) -> Tensor:
+    """the boot strap value from the reward form going to the next state and the predicted state-action value for the next state"""
+    # if the state is final then there is no expected reward
+    next_state_values: Tensor = torch.zeros([BATCH_SIZE, 2], device=DEVICE) 
+    with torch.no_grad(): # calculation costs less as we tell pytorch we will not be optimising        
+        next_expected_softmax: Tensor = torch.zeros([BATCH_SIZE, 2], device=DEVICE)
+        next_expected_log_softmax: Tensor = torch.zeros([BATCH_SIZE, 2], device=DEVICE)
 
-        # get the value from the target network
-        bootstrap_next_state_action_values = torch.zeros(BATCH_SIZE, device=DEVICE) # if the state is final then there is no expected reward
+        # Munchausen term
+        # [BATCH_SIZE]
+        current_log_softmax = F.log_softmax(target_net(state_batch) / M_TAU, dim=1).gather(1, action_batch.unsqueeze(1)).squeeze()
+        current_log_softmax = torch.clamp(current_log_softmax, min=MUNCHAUSEN_LOWER_BOUND)
         
-        next_policy = target_net(non_final_next_states)
+        # soft Bellman backup
+        # [BATCH_SIZE, 2]
+        next_expected_softmax[non_final_mask] = F.softmax(target_net(non_final_next_states) / M_TAU, dim=1)
         
-        # get the greedy next action 
-        next_greedy_action = next_policy.argmax(1).unsqueeze(1)
-        bootstrap_next_state_action_values[non_final_mask] = next_policy.gather(1, next_greedy_action).squeeze(1)
-        next_expected_softmax[non_final_mask] = F.log_softmax(next_policy, dim=1).gather(1, next_greedy_action).squeeze(1)
+        # [BATCH_SIZE, 2]
+        next_expected_log_softmax[non_final_mask] = F.log_softmax(target_net(non_final_next_states) / M_TAU, dim=1)
+        next_expected_log_softmax = torch.clamp(next_expected_log_softmax, min=MUNCHAUSEN_LOWER_BOUND)
+        
+        next_state_values[non_final_mask] = target_net(non_final_next_states)
+    
+        # Compute the expected Q values from the target network using the Bellman equation
+        corrected_next_state_action_value = (next_state_values - M_TAU * next_expected_log_softmax)
+        corrected_next_state_value = (corrected_next_state_action_value * next_expected_softmax).sum(dim=1)
 
-    # Compute the expected Q values from the target network using the Bellman equation
-    bootstrap_state_action_values = (bootstrap_next_state_action_values - M_TAU * next_expected_softmax) * GAMMA + reward_batch + ALPHA * M_TAU *  expected_softmax
+    bootstrap_state_action_values =  (
+        reward_batch
+        + ALPHA * M_TAU * current_log_softmax
+        + corrected_next_state_value * GAMMA
+    )
+
     return bootstrap_state_action_values
 
 
 def _get_predicted_state_action_value(stabilising_net: StabilisingDQN, state_batch: Tensor, action_batch: Tensor):
-    return stabilising_net(state_batch.detach()).gather(1, action_batch.unsqueeze(1))
+    return stabilising_net(state_batch).gather(1, action_batch.unsqueeze(1))
