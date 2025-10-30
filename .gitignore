@@ -4,3 +4,4 @@ fig_*/
 .venv/
 __pycache__/
 *.pyc
+*.pyo

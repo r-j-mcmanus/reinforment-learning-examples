@@ -14,21 +14,21 @@ from CriticNet import StabilisingCriticNet
 
 
 class BasePolicyNet(nn.Module):
-    def __init__(self, n_observations: int, actions_dimention: int):
+    def __init__(self, n_observations: int, actions_dimension: int):
         """A fully connected feed forward NN to model the policy function.
 
         arguments
         ---------
         n_observations: int
-            The number of observations of the enviroment state that we pass to the model
-        actions_dimention: int
-            The dimentionality of the continuous action space
+            The number of observations of the environment state that we pass to the model
+        actions_dimension: int
+            The dimensionality of the continuous action space
         """
         super().__init__()
 
         self.layer_1 = nn.Linear(n_observations, 128)
         self.layer_2 = nn.Linear(128, 128)
-        self.layer_3 = nn.Linear(128, actions_dimention)
+        self.layer_3 = nn.Linear(128, actions_dimension)
 
         self.steps_done = 0
         self.std_start = EXPLORATION_STD_START
@@ -37,7 +37,7 @@ class BasePolicyNet(nn.Module):
 
 
     def forward(self, x: Tensor) -> Tensor:
-        """Called with either a single observation of the enviroment to predict the best next action, or with batches during optimisation"""
+        """Called with either a single observation of the environment to predict the best next action, or with batches during optimisation"""
         x = F.relu(self.layer_1(x))
         x = F.relu(self.layer_2(x))
         return self.layer_3(x)
@@ -56,8 +56,8 @@ class BasePolicyNet(nn.Module):
     
 
 class StabilisingPolicyNet(BasePolicyNet):
-    def __init__(self, n_observations: int, actions_dimention: int):
-        super().__init__(n_observations, actions_dimention)
+    def __init__(self, n_observations: int, actions_dimension: int):
+        super().__init__(n_observations, actions_dimension)
         self.optimizer = optim.AdamW(self.parameters(), lr=LEARNING_RATE, amsgrad=True)
 
         # by passing self.parameters, the optimiser knows which network is optimised
@@ -79,8 +79,8 @@ class StabilisingPolicyNet(BasePolicyNet):
 
 
 class TargetPolicyNet(BasePolicyNet):
-    def __init__(self, n_observations: int, actions_dimention: int):
-        super().__init__(n_observations, actions_dimention)
+    def __init__(self, n_observations: int, actions_dimension: int):
+        super().__init__(n_observations, actions_dimension)
 
     def soft_update(self, stabilising_net: StabilisingPolicyNet):
         stabilising_net_state_dict = stabilising_net.state_dict()

@@ -46,7 +46,7 @@ def run(env: Env):
                 
     for i_episode in range(NUM_EPISODES):
 
-        # randomly initialise the enviroment, get the corrisponding state
+        # randomly initialise the environment, get the corrisponding state
         state, _ = env.reset()
         # format approprietly
         state = torch.tensor(state, dtype=torch.float32, device=DEVICE).unsqueeze(0)

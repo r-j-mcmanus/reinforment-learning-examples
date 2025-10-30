@@ -6,18 +6,18 @@ import torch.optim as optim
 from constants import *
 
 class BaseNet(nn.Module):
-    def __init__(self, n_observations: int, actions_dimention: int):
+    def __init__(self, n_observations: int, actions_dimension: int):
         """A fully connected feed forward NN to model the state-value function.
 
         arguments
         ---------
         n_observations: int
-            The number of observations of the enviroment state that we pass to the model
-        actions_dimention: int
-            The dimentionality of the continuous action space"""
+            The number of observations of the environment state that we pass to the model
+        actions_dimension: int
+            The dimensionality of the continuous action space"""
         super().__init__()
 
-        self.layer_1 = nn.Linear(n_observations + actions_dimention, 128)
+        self.layer_1 = nn.Linear(n_observations + actions_dimension, 128)
         self.layer_2 = nn.Linear(128, 128)
         self.layer_3 = nn.Linear(128, 1)
 
@@ -39,7 +39,7 @@ class BaseNet(nn.Module):
         # critic_net takes state and action as input and returns a scalar Q-value.
         # Since action has requires_grad=True, PyTorch builds a computation graph that links the output q_value to action
         q_value = self(torch.cat([state, action], dim=1))
-        # This triggers backpropagation from q_value (a scalar) through the computation graph.
+        # This triggers back-propagation from q_value (a scalar) through the computation graph.
         # PyTorch computes the gradient of q_value with respect to all tensors that have requires_grad=True — in this case, action.
         q_value.backward(torch.ones_like(q_value))
         # This retrieves the gradient of q_value with respect to action
@@ -52,13 +52,13 @@ class BaseNet(nn.Module):
 
 
 class StabilisingCriticNet(BaseNet):
-    def __init__(self, n_observations: int, actions_dimention: int):
-        super().__init__(n_observations, actions_dimention)
+    def __init__(self, n_observations: int, actions_dimension: int):
+        super().__init__(n_observations, actions_dimension)
         self.optimizer = optim.AdamW(self.parameters(), lr=LEARNING_RATE, amsgrad=True)
 
     def optimise(self, predicted_state_action_values: Tensor, expected_state_action_values: Tensor, step: int):
         criterion = nn.SmoothL1Loss()
-        loss = criterion(predicted_state_action_values, expected_state_action_values)
+        loss = criterion(predicted_state_action_values.squeeze(1), expected_state_action_values)
 
         self.optimizer.zero_grad()
         loss.backward() 
@@ -71,8 +71,8 @@ class StabilisingCriticNet(BaseNet):
 
 
 class TargetCriticNet(BaseNet):
-    def __init__(self, n_observations: int, actions_dimention: int):
-        super().__init__(n_observations, actions_dimention)
+    def __init__(self, n_observations: int, actions_dimension: int):
+        super().__init__(n_observations, actions_dimension)
 
     def soft_update(self, stabilising_net: StabilisingCriticNet):
         stabilising_net_state_dict = stabilising_net.state_dict()

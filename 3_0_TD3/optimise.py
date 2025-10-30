@@ -1,5 +1,6 @@
 import torch
 from gymnasium import Env
+from torch import Tensor
 
 from replay_memory import Memory, Transition
 from constants import *
@@ -18,21 +19,52 @@ def apply_learning_step(memory: Memory, step: int, env: Env,
     if len(memory) < BATCH_SIZE:
         return        
 
+    state_batch, action_batch, reward_batch, non_final_next_states, non_final_mask = _get_batch(memory)
+
+    expected_state_action_values = _get_bootstrap_state_action_value(env, target_policy, target_critic_net_1, target_critic_net_2, 
+                                                                     state_batch, action_batch, reward_batch, non_final_next_states, non_final_mask)
+
+    predicted_state_action_values_1, predicted_state_action_values_2 = _get_predicted_state_action_value(stabilising_critic_net_1, stabilising_critic_net_2, state_batch, action_batch)
+
+    # optimise the stabilising net based on the minibatch
+    stabilising_critic_net_1.optimise(predicted_state_action_values_1, expected_state_action_values, step)
+    stabilising_critic_net_2.optimise(predicted_state_action_values_2, expected_state_action_values, step)
+
+    # allows for critic to represent policy by allowing multiple changes based on policy
+    # larger UPDATE_DELAY reduces variance
+    if step % UPDATE_DELAY == 0:
+        # update the actor policy using samples policy gradient 
+        stabilising_policy.optimise(stabilising_critic_net_1, state_batch, step)
+
+        # soft update the target networks
+        target_policy.soft_update(stabilising_policy)
+        target_critic_net_1.soft_update(stabilising_critic_net_1)
+        target_critic_net_2.soft_update(stabilising_critic_net_2)
+
+
+def _get_batch(memory: Memory) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
     transitions = memory.sample(BATCH_SIZE)
 
     batch = Transition(*zip(*transitions))
     
-    # next_state_batch has to be treated diferently
     non_final_mask = torch.tensor(
         tuple(map(lambda s: s is not None, batch.next_state)),
         device=DEVICE, dtype=torch.bool)
-    non_final_next_states = torch.cat([s for s in batch.next_state if s is not None]).detach()
 
+    non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
+    
     # change the list of transition data (states, actions and rewards) into tensors
     state_batch = torch.cat(batch.state)
     action_batch = torch.cat(batch.action) # index of the action used
     reward_batch = torch.cat(batch.reward)
 
+    return state_batch, action_batch, reward_batch, non_final_next_states, non_final_mask
+
+
+def _get_bootstrap_state_action_value(env: Env, target_policy: TargetPolicyNet, target_critic_net_1: TargetCriticNet, target_critic_net_2: TargetCriticNet, 
+                                      state_batch: Tensor, action_batch: Tensor, reward_batch: Tensor, non_final_next_states: Tensor, non_final_mask: Tensor) -> Tensor:
+    """the boot strap value from the reward form going to the next state and the predicted state-action value for the next state"""
+    
     bootstrap_val = torch.zeros(BATCH_SIZE, device=DEVICE) # if the state is final then there is no expected reward
     with torch.no_grad():
         # Predict next actions using the target policy
@@ -45,24 +77,11 @@ def apply_learning_step(memory: Memory, step: int, env: Env,
             target_critic_net_2(torch.cat([non_final_next_states, next_actions], dim=1)).squeeze(), 
         )
 
-        # outside of the no_grad as it's graph is used by the critic net optimiser
-        expected_state_action_values = reward_batch + GAMMA * bootstrap_val
+    # outside of the no_grad as it's graph is used by the critic net optimiser
+    return reward_batch + GAMMA * bootstrap_val
 
-    # find the predicted state value for the stabilising critic from the current state 
+
+def _get_predicted_state_action_value(stabilising_critic_net_1: StabilisingCriticNet, stabilising_critic_net_2: StabilisingCriticNet, state_batch: Tensor, action_batch: Tensor) -> tuple[Tensor, Tensor]:
     predicted_state_action_values_1 = stabilising_critic_net_1(torch.cat([state_batch, action_batch], dim=1).detach()).squeeze()
     predicted_state_action_values_2 = stabilising_critic_net_2(torch.cat([state_batch, action_batch], dim=1).detach()).squeeze()
-
-    # optimise the stabilising net based on the minibatch
-    stabilising_critic_net_1.optimise(predicted_state_action_values_1, expected_state_action_values, step)
-    stabilising_critic_net_2.optimise(predicted_state_action_values_2, expected_state_action_values, step)
-
-    # allows for critic to represent policy by allowing multiple changes based on policy
-    # larger UPDATE_DELAY reduces variance
-    if step % UPDATE_DELAY == 0:
-        # update the actor policy using samples policy gradient 
-        stabilising_policy.optimise(stabilising_critic_net_1, state_batch, step) # picking 1 seems arbitery
-
-        # soft update the target networks
-        target_policy.soft_update(stabilising_policy)
-        target_critic_net_1.soft_update(stabilising_critic_net_1)
-        target_critic_net_2.soft_update(stabilising_critic_net_2)
+    return predicted_state_action_values_1, predicted_state_action_values_2

@@ -28,7 +28,7 @@ class ReplayMemory(Memory):
         self._memory.append(Transition(*args))
 
     def sample(self, batch_size) -> list[Transition]:
-        """As described in 1312.5602: Algorithm 1, Sample random minibatch of transitions"""
+        """As described in 1312.5602: Algorithm 1, Sample random mini-batch of transitions"""
         return random.sample(self._memory, batch_size)
     
     def __len__(self) -> int:

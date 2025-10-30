@@ -20,10 +20,10 @@ torch.manual_seed(seed)
 # following 1802.09477
 # Addressing Function Approximation Error in Actor-Critic Methods
 
-# while this works, the cart doesnt reache the goal in reasonable simulation time, and so doesnt learn of the posative reward
-# so doesnt learn to work towards it
-# as a result it will not converge on a sensable timescale
-# this is as the cart example is `sparse reward enviroment`
+# while this works, the cart doesn't reach the goal in reasonable simulation time, and so doesn't learn of the positive reward
+# so doesn't learn to work towards it
+# as a result it will not converge on a sensible timescale
+# this is as the cart example is `sparse reward environment`
 
 def run(env: Env):
     if torch.cuda.is_available() or torch.backends.mps.is_available():
