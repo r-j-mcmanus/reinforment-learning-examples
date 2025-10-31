@@ -58,7 +58,7 @@ class StabilisingCriticNet(BaseNet):
 
     def optimise(self, predicted_state_action_values: Tensor, expected_state_action_values: Tensor, step: int):
         criterion = nn.SmoothL1Loss()
-        loss = criterion(predicted_state_action_values.squeeze(1), expected_state_action_values)
+        loss = criterion(predicted_state_action_values, expected_state_action_values)
 
         self.optimizer.zero_grad()
         loss.backward() 

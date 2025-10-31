@@ -12,7 +12,6 @@ from constants import *
 from CriticNet import StabilisingCriticNet
 
 
-
 class BasePolicyNet(nn.Module):
     def __init__(self, n_observations: int, actions_dimension: int):
         """A fully connected feed forward NN to model the policy function.
@@ -34,7 +33,6 @@ class BasePolicyNet(nn.Module):
         self.std_start = EXPLORATION_STD_START
         self.std_end = EXPLORATION_STD_END
         self.std_decay = EXPLORATION_STD_DECAY
-
 
     def forward(self, x: Tensor) -> Tensor:
         """Called with either a single observation of the environment to predict the best next action, or with batches during optimisation"""
@@ -60,11 +58,10 @@ class StabilisingPolicyNet(BasePolicyNet):
         super().__init__(n_observations, actions_dimension)
         self.optimizer = optim.AdamW(self.parameters(), lr=LEARNING_RATE, amsgrad=True)
 
-        # by passing self.parameters, the optimiser knows which network is optimised
-
     def optimise(self, critic_net: StabilisingCriticNet, state_batch: Tensor, step: int):
         """update actor policy using the sampled policy gradient"""
         predicted_actions = self(state_batch) # μ(s)
+
         q_values = critic_net(torch.cat([state_batch, predicted_actions], dim=1)) # Q(s, μ(s))
         actor_loss = -q_values.mean() # We want to maximize Q, so minimize -Q
 
@@ -75,7 +72,6 @@ class StabilisingPolicyNet(BasePolicyNet):
 
         if step % 100 == 0:
             print(f"Actor Loss: {actor_loss.item()}")
-
 
 
 class TargetPolicyNet(BasePolicyNet):

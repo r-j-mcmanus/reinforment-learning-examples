@@ -130,26 +130,26 @@ def plot(observations: list[list[float]], rewards: list[float], episode: int):
     import pandas as pd
     import matplotlib.pyplot as plt
 
+    # df = pd.DataFrame(observations, columns=['y', 'dy', 'hue'])
+    # df['x'] = range(len(df))
+    # sns.scatterplot(data=df, x='x', y='y', hue='hue')
+    # plt.savefig(f'fig/td3_observations_ep_{episode}')
+
+    # plt.close()
+
     df = pd.DataFrame(observations, columns=['y', 'dy', 'hue'])
     df['x'] = range(len(df))
-    sns.scatterplot(data=df, x='x', y='y', hue='hue')
-    plt.savefig(f'fig/td3_observations_ep_{episode}')
-
-    plt.close()
-
-    df = pd.DataFrame(observations, columns=['y', 'dy', 'hue'])
-    df['x'] = range(len(df))
-    sns.lineplot(data=df, x='y', y='dy', hue='hue')
+    sns.scatterplot(data=df, x='y', y='dy', hue='hue')
     plt.savefig(f'fig/td3_phase_ep_{episode}')
 
     plt.close()
 
-    df = pd.DataFrame(rewards, columns=['y'])
-    df['x'] = range(len(df))
-    sns.scatterplot(data=df, x='x', y='y')
-    plt.savefig(f'fig/td3_rewards_ep_{episode}')
+    # df = pd.DataFrame(rewards, columns=['y'])
+    # df['x'] = range(len(df))
+    # sns.scatterplot(data=df, x='x', y='y')
+    # plt.savefig(f'fig/td3_rewards_ep_{episode}')
 
-    plt.close()
+    # plt.close()
 
 
 if __name__ == "__main__":
