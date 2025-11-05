@@ -5,3 +5,4 @@ fig_*/
 __pycache__/
 *.pyc
 *.pyo
+papers/
