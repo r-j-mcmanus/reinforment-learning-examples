@@ -10,6 +10,8 @@ from state import State
 class SSM(nn.Module):
     def __init__(self, state_size: int, obs_size: int, action_size: int, mean_only=False, activation=F.elu, min_stddev=1e-5):
         """
+        https://arxiv.org/pdf/1802.03006
+
         Gaussian State Space Model (SSM) implemented in PyTorch.
 
         This model defines a latent dynamics system where transitions between states
@@ -56,9 +58,6 @@ class SSM(nn.Module):
         """Given a state dict, returns the associated MultivariateNormal distribution."""
         stddev = torch.clamp(state.stddev, min=self.min_stddev)
         return MultivariateNormal(state.mean, torch.diag_embed(stddev))
-
-    def features_from_state(self, state):
-        return state['sample']
 
     def divergence_from_states(self, lhs: State, rhs: State) -> Tensor:
         """Given two states, finds the associated distribtions and returns the KL divergence."""
