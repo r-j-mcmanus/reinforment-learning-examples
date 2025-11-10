@@ -5,7 +5,9 @@ from torch.distributions import MultivariateNormal, Distribution
 from torch import Tensor
 
 from state import State
-
+from transition import Transition
+from posterior import Posterior
+from decoder import Decoder
 
 class RSSM(nn.Module):
     def __init__(self, state_size: int, obs_size: int, action_size: int, 
@@ -22,7 +24,7 @@ class RSSM(nn.Module):
 
         Args:
             state_size (int): Dimensionality of the latent state space.
-            obs_size (int): Dimensionality of the latent state space.
+            obs_size (int): Dimensionality of the observation state space.
             action_size (int): Dimensionality of the latent state space.
             activation (callable): Activation function used in hidden layers (default: ELU).
             min_stddev (float): Minimum standard deviation to ensure numerical stability.
@@ -48,20 +50,23 @@ class RSSM(nn.Module):
         self._hidden_size = 32
         self._rnn_hidden_size = rnn_hidden_size
         self._rnn_num_layers = rnn_num_layers
+        self.decoder_hidden_size = 32
 
         # deterministic network
         self._rnn = nn.RNN(state_size + action_size, rnn_hidden_size, rnn_num_layers)
         self._hn = None
 
         # Transition network
-        self.transition_fc1 = nn.Linear(self._rnn_hidden_size, self._hidden_size)
-        self.transition_mean = nn.Linear(self._hidden_size, state_size)
-        self.transition_stddev = nn.Linear(self._hidden_size, state_size)
+        self.transition = Transition(self._rnn_hidden_size, state_size)
 
         # Posterior network
-        self.posterior_fc1 = nn.Linear(2 * state_size + obs_size, self._hidden_size)
-        self.posterior_mean = nn.Linear(self._hidden_size, state_size)
-        self.posterior_stddev = nn.Linear(self._hidden_size, state_size)
+        post_input_size = self._rnn_hidden_size + self.obs_size
+        self.posterior = Posterior(post_input_size, state_size)
+
+        # State Decoder
+        decoder_input_size = self._rnn_hidden_size + state_size
+        self.observation = Decoder(decoder_input_size, self.obs_size)
+        self.reward = Decoder(decoder_input_size, 1)
 
     def distribution_from_state(self, state: State) -> Distribution:
         """Given a state dict, returns the associated MultivariateNormal distribution."""
@@ -92,28 +97,11 @@ class RSSM(nn.Module):
             else:
                 assert h0.size() == (self._rnn_num_layers, batch_size, self._rnn_hidden_size)
                 self._hn = h0
-        _, self._hn = self._rnn(inputs, h0)
+        _, self._hn = self._rnn(inputs, self._hn)
 
     def reset_hidden(self) -> None:
         """Resets the RNN hidden state."""
         self._hn = None
-
-    def transition(self) -> State:
-        """
-        Given the RNN hidden activation vectors, computes the prior distribution over the next state.
-        
-        h_t: RNN hidden activation vectors
-
-        theta_1 = NN parameters for mean of p(alpha)
-        theta_2 = NN parameters for stddev of p(alpha)
-        
-        p(z_t| h_t) ~ N(mean(theta_1), stddev(theta_2))
-        """
-        hidden = self.activation(self.transition_fc1(self._hn))
-        mean = self.transition_mean(hidden)
-        stddev = F.softplus(self.transition_stddev(hidden)) + self.min_stddev
-        sample = mean if self.mean_only else MultivariateNormal(mean, torch.diag_embed(stddev)).rsample()
-        return State(mean, stddev, sample)
 
     def posterior(self, obs: Tensor) -> State:
         """
@@ -129,15 +117,20 @@ class RSSM(nn.Module):
         
         p(z_t| h_t, x_t) = p(x_t | z_t, h_t) p(z_t| h_t) / p(x_t) ~ N(mean(phi_1), stddev(phi_2))
 
-        Approximate the Basian posterior using a NN that takes the the prior and current observation.
+        Approximate the Bayesian posterior using a NN that takes the the prior and current observation.
         """
-        prior = self.transition()
-        assert isinstance(self._hn, Tensor)
-        # see fig2c where the posterior is conditioned on h_t as well as the latent space predicted by the prior
+        prior = self.transition(self._hn)
         inputs = torch.cat([prior.mean, prior.stddev, self._hn, obs], dim=1)
-        hidden = self.activation(self.posterior_fc1(inputs))
-        mean = self.posterior_mean(hidden)
-        stddev = F.softplus(self.posterior_stddev(hidden)) + self.min_stddev
-        sample = mean if self.mean_only else MultivariateNormal(mean, torch.diag_embed(stddev)).rsample()
-        return State(mean, stddev, sample)
+        return self.posterior(inputs)
+    
+    def prior(self) -> State:
+        return self.transition(self._hn)
+    
+    def observation_error(self, posterior_state: State, obs: Tensor):
+        inputs = torch.cat([self._hn, posterior_state.sample])
+        return nn.functional.mse_loss(self.observation(inputs), obs)
+    
+    def reward_error(self, posterior_state: State, reward: Tensor):
+        inputs = torch.cat([self._hn, posterior_state.sample])
+        return nn.functional.mse_loss(self.reward(inputs), reward)
     
