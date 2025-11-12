@@ -22,7 +22,7 @@ class Memory:
 class ReplayMemory(Memory):
     def __init__(self, capacity): 
         # from doc: Once a bounded length deque is full, when new items are added, a corresponding number of items are discarded from the opposite end.
-        self._memory = deque([], maxlen=capacity)
+        self._memory: deque[Transition] = deque([], maxlen=capacity)
 
     def push(self, *args):
         self._memory.append(Transition(*args))
@@ -48,7 +48,11 @@ class ReplayMemory(Memory):
         for _ in range(batch_size):
             # Choose a valid start index so the sequence fits in memory
             start_idx = random.randint(0, memory_size - sequence_length)
-            seq = [self._memory[start_idx + i] for i in range(sequence_length)]
+            seq = []
+            for i in range(sequence_length):
+                val = self._memory[start_idx + i]
+                if val.next_state is None:
+                    break
+                seq.append(val)
             sequences.append(seq)
-
         return sequences
