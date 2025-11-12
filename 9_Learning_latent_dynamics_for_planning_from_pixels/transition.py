@@ -63,7 +63,8 @@ class Transition(nn.Module):
         """
         hidden = self.activation(self.transition_fc1(input))
         hidden = self.activation(self.transition_fc2(hidden))
-        mean = self.transition_mean(hidden)
-        stddev = F.softplus(self.transition_stddev(hidden)) + self.min_stddev
-        sample = mean if self.mean_only else MultivariateNormal(mean, torch.diag_embed(stddev)).rsample()
+        mean: Tensor = self.transition_mean(hidden)
+        stddev: Tensor = F.softplus(self.transition_stddev(hidden)) + self.min_stddev
+        sample: Tensor = mean if self.mean_only else MultivariateNormal(mean, torch.diag_embed(stddev)).rsample()
         return State(mean, stddev, sample)
+    

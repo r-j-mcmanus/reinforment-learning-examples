@@ -42,4 +42,4 @@ class Decoder(nn.Module):
         x = self.fc_out(x)
         if self._output_activation is not None:
             x = self._output_activation(x)
-        return 
+        return x

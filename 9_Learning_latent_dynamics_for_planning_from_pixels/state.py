@@ -7,3 +7,11 @@ class State:
     mean: Tensor
     stddev: Tensor
     sample: Tensor
+
+    def detach(self):
+        """Returns a detached version of the state."""
+        return State(
+            mean=self.mean.detach(),
+            stddev=self.stddev.detach(),
+            sample=self.sample.detach()
+        )
