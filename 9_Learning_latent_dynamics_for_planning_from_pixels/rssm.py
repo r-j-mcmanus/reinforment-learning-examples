@@ -73,27 +73,27 @@ class RSSM(nn.Module):
         self.observation = Decoder(decoder_input_size, self.obs_size)
         self.reward = Decoder(decoder_input_size, 1)
     
-    def rollout(self, initial_state: Tensor, initial_hidden_state: Tensor, action: Tensor, horizon_length: int = 3) -> tuple[list[Tensor], list[Tensor]]:
+    def rollout(self, initial_state: State, initial_hidden_state: Tensor, action: Tensor, horizon_length: int = 3) -> list[State]:
         """predicts the next state from both the deterministic and stochastic space model given the 
         initial observation and actions up to the learning horizon_length. 
         
         Returns
         -------
-        det_steps: list[Tensor]
         stoch_steps: list[Tensor]
         """
-        det_steps = []
-        stoch_steps = []
+        deterministic_steps = []
+        stochastic_steps = []
 
         h = initial_hidden_state
         s = initial_state # predict what the state should be given the observation and the hidden state
 
-        for i in range(horizon_length):
-            h = self.deterministic_step(s, action[:,i], h)
-            s = self.transition(h).mean #  stochastic step
-            det_steps.append(h)
-            stoch_steps.append(s)
-        return det_steps, stoch_steps
+        sequence_len = action.shape[1]    
+        for i in range(min(horizon_length, sequence_len)):
+            h = self.deterministic_step(s.sample.squeeze(), action[:,i], h)
+            s = self.transition(h) #  stochastic step
+            deterministic_steps.append(h)
+            stochastic_steps.append(s)
+        return stochastic_steps
 
     def distribution_from_state(self, state: State) -> Distribution:
         """Given a state dict, returns the associated MultivariateNormal distribution."""
@@ -150,7 +150,7 @@ class RSSM(nn.Module):
         Returns:
             Tensor: next deterministic hidden state (batch_size, rnn_hidden_size).
         """
-        inputs = torch.cat([prev_state, prev_action], dim=1).unsqueeze(0)  # (1, batch_size, state_size + action_size)
+        inputs = torch.cat([prev_state.squeeze(), prev_action], dim=1).unsqueeze(0)  # (1, batch_size, state_size + action_size)
         _, h = self._rnn(inputs, h)
         assert isinstance(h, torch.Tensor)
         return h
@@ -173,7 +173,7 @@ class RSSM(nn.Module):
         """
         assert isinstance(h, torch.Tensor)
         prior = self.transition.forward(h)
-        inputs = torch.cat([prior.mean, prior.stddev, h, obs], dim=1)
+        inputs = torch.cat([prior.mean, prior.stddev, h, obs.unsqueeze(0)], dim=2)
         return self.posterior_model(inputs)
     
     def prior(self, h: Tensor) -> State:
@@ -186,7 +186,7 @@ class RSSM(nn.Module):
         loss for my reconstruction vs the real observation
         """
         assert isinstance(h, torch.Tensor)
-        inputs = torch.cat([h, posterior_state.sample])
+        inputs = torch.cat([h, posterior_state.sample], dim=2)
         return nn.functional.mse_loss(self.observation(inputs), obs).mean() # use mse not log likelihood as the observation model is assumed to be Gaussian
     
     def reward_reconstruction_error(self, posterior_state: State, reward: Tensor, h: Tensor):
@@ -195,6 +195,6 @@ class RSSM(nn.Module):
         using the observation model to move from the state space to observation space. I then find the mse 
         loss for my reconstruction vs the real observation
         """
-        inputs = torch.cat([h, posterior_state.sample])
+        inputs = torch.cat([h, posterior_state.sample], dim=2)
         return nn.functional.mse_loss(self.reward(inputs), reward).mean() # use mse not log likelihood as the observation model is assumed to be Gaussian
     

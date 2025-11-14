@@ -8,6 +8,7 @@ from rssm_training import train_rssm
 from constants import *
 from replay_memory import ReplayMemory
 
+
 def main():
     # Create the environment
     env = gym.make('Ant-v5') #, render_mode = 'human')
@@ -29,7 +30,7 @@ def main():
     rssm = RSSM(state_size, obs_size, action_size)
     horizon_size = 3 # how far into the future do both train the RSSM and plan
     rssm_train_step = 100 # when adding to 
-    rssm = train_rssm(rssm, memory, overshooting_distance=horizon_size) # initial training on warm up data
+    rssm = train_rssm(rssm, memory, horizon_size) # initial training on warm up data
 
     for episode in range(num_episodes):
 
