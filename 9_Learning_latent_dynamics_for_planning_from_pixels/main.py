@@ -59,7 +59,7 @@ def main():
 
             # Store the transition in memory
             if record_ep:
-                memory.push(obs, action, next_obs, reward)
+                memory.push(obs, torch.from_numpy(action), next_obs, reward)
 
             # Render the environment (optional)
             #env.render()
@@ -101,9 +101,12 @@ def warm_up_memory(env, memory: ReplayMemory, seed_ep_count: int, max_num_steps:
                 next_obs = torch.tensor(next_obs, dtype=torch.float32, device=DEVICE).unsqueeze(0)
 
             # Store the transition in memory
-            memory.push(obs, action, next_obs, reward)
+            memory.push(obs, torch.from_numpy(action), next_obs, reward)
             
             # Check if the episode is done
             if done:
                 break
     return memory
+
+if __name__ == "__main__":
+    main()

@@ -10,57 +10,51 @@ from state import State
 from replay_memory import ReplayMemory
 
 
-def train_rssm(rssm: RSSM, replay_memory: ReplayMemory, overshooting_distance: int = 3,
+def train_rssm(rssm: RSSM, replay_memory: ReplayMemory, horizon_length: int = 3,
                *, 
-               sequence_length: int = 10, batch_size: int = 16) -> RSSM:
+               sequence_length: int = 2, batch_size: int = 3) -> RSSM:
     """Trains an RSSM on sequences of observations and actions."""
     # Instantiate model
     optimizer = optim.AdamW(rssm.parameters(), lr=1e-3)
 
     for epoch in range(100):  # number of epochs
-        total_loss = 0
+        loss = 0
 
-        loss = None
+        sequence_transitions = replay_memory.sample_sequential(batch_size, sequence_length)
+        h_1: torch.Tensor = torch.zeros(rssm._rnn_num_layers, batch_size, rssm._rnn_hidden_size)
+        h_t = h_1 # relabled for ease in bellow for loop
 
-        hs: deque[torch.Tensor] = deque()
-        posterior_states: deque[State] = deque()
-        prior_states: deque[State] = deque()
+        past_rollouts = deque([], maxlen=horizon_length)
 
-        # see `state_batch, action_batch, reward_batch, non_final_next_states, non_final_mask = _get_batch(memory)`
-        # in optimise.py
-        state_batch, action_batch, reward_batch, non_final_next_states, non_final_mask = replay_memory.sample_sequential(batch_size, sequence_length)
+        for t in range(0, sequence_length-1):
+            # transition shape (batch_size, sequence_length, _)
+            obs = sequence_transitions.state[:,t]
+            next_actions = sequence_transitions.action[:, t:t+horizon_length]
+            next_obs = sequence_transitions.state[:,t+1]
+            next_reward = sequence_transitions.state[:,t+1]
 
-        # to do vectorise this then sum along sequence dimension?
-        for t in range(1, sequence_length):
-            obs = torch.Tensor(non_final_next_states[:t])
-            reward = torch.Tensor(reward_batch[:t])
-            prev_obs = torch.Tensor(state_batch[:t])
-            action = torch.Tensor(action_batch[:t])
+            posterior_state = rssm.posterior(obs, h_t) # predict what the state should be given the observation and the hidden state
+            transition_state = rssm.transition(h_t) # predict what the state should be given the hidden state
 
-            # deterministic, transition and posterior
-            h: torch.Tensor = torch.zeros(rssm._rnn_num_layers, batch_size, rssm._rnn_hidden_size)
-            h = rssm.deterministic_step(prev_obs, action, h) # updates hidden vector
-            prior_state = rssm.prior(h) # uses hidden vector 
-            posterior_state = rssm.posterior(obs, h)
+            # getting the diagonal lines in fig 3 c of 1811.04551, does not take the left most node
+            h_t, s_it = rssm.rollout(posterior_state.mean, h_t, next_actions)
+            # this finds s_{i|j} where:
+            #  i in [sequence_start, sequence_length]
+            #  j = sequence_start is the last observation the state is conditioned on
+            past_rollouts.append(s_it)
 
-            # KL divergence
             beta = min(1.0, epoch / 50) # prevents early collapse of latent space
-            #kl_loss = beta * model.divergence_from_states(posterior_state, prior_state)
-            kl_loss = beta * rssm.latent_overshooting_kl(posterior_states, prior_states, action[-overshooting_distance:], hs, overshooting_distance)
-
-            # Reconstruction loss, predicting obs from latent state
-            reconstruction_loss = rssm.observation_reconstruction_error(posterior_state, obs, h)
+            for i, state_rollout in enumerate(past_rollouts):
+                # take the ith so we test against the ith step of the rollout
+                loss += beta * rssm.divergence_from_states(transition_state, state_rollout[i]).item() # KL divergence
+            
+            # Reconstruction loss, predicting next_obs from latent state
+            reconstruction_loss = rssm.observation_reconstruction_error(posterior_state, next_obs, h_t)
 
             # reward loss
-            reward_loss = rssm.reward_reconstruction_error(posterior_state, reward, h)
+            reward_loss = rssm.reward_reconstruction_error(posterior_state, next_reward, h_t)
 
-            # Total loss
-            loss = reconstruction_loss + kl_loss + reward_loss
-            total_loss += loss.item()
-
-            hs.append(h.detach())
-            posterior_states.append(posterior_state.detach()) # Not sure this is a good idea
-            prior_states.append(prior_state.detach()) # Not sure this is a good idea
+            loss += reconstruction_loss + reward_loss
 
         assert isinstance(loss, torch.Tensor)
         # Back-propagation
@@ -68,5 +62,5 @@ def train_rssm(rssm: RSSM, replay_memory: ReplayMemory, overshooting_distance: i
         loss.backward()
         optimizer.step()
 
-        print(f"Epoch {epoch}, Loss: {total_loss:.4f}")
+        print(f"Epoch {epoch}, Loss: {loss.item():.4f}")
     return rssm

@@ -72,6 +72,28 @@ class RSSM(nn.Module):
         decoder_input_size = self._rnn_hidden_size + state_size
         self.observation = Decoder(decoder_input_size, self.obs_size)
         self.reward = Decoder(decoder_input_size, 1)
+    
+    def rollout(self, initial_state: Tensor, initial_hidden_state: Tensor, action: Tensor, horizon_length: int = 3) -> tuple[list[Tensor], list[Tensor]]:
+        """predicts the next state from both the deterministic and stochastic space model given the 
+        initial observation and actions up to the learning horizon_length. 
+        
+        Returns
+        -------
+        det_steps: list[Tensor]
+        stoch_steps: list[Tensor]
+        """
+        det_steps = []
+        stoch_steps = []
+
+        h = initial_hidden_state
+        s = initial_state # predict what the state should be given the observation and the hidden state
+
+        for i in range(horizon_length):
+            h = self.deterministic_step(s, action[:,i], h)
+            s = self.transition(h).mean #  stochastic step
+            det_steps.append(h)
+            stoch_steps.append(s)
+        return det_steps, stoch_steps
 
     def distribution_from_state(self, state: State) -> Distribution:
         """Given a state dict, returns the associated MultivariateNormal distribution."""
