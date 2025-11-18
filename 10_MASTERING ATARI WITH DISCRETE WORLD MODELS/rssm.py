@@ -109,8 +109,18 @@ class RSSM(nn.Module):
         stddev = torch.clamp(state.stddev, min=self.min_stddev)
         return MultivariateNormal(state.mean, torch.diag_embed(stddev))
 
+    def kl_balancing_divergence(self, post: State, prior: State, alpha: float) -> Tensor:
+        """Given two states, finds the associated distributions and returns the KL divergence."""
+        post_dist = self.distribution_from_state(post)
+        pri_dist = self.distribution_from_state(prior)
+        kl = (
+            alpha * torch.distributions.kl_divergence(post_dist.detach(), pri_dist) 
+            + (1-alpha) * torch.distributions.kl_divergence(post_dist, pri_dist.detach())
+        )
+        return kl.mean()
+
     def divergence_from_states(self, post: State, prior: State) -> Tensor:
-        """Given two states, finds the associated distribtions and returns the KL divergence."""
+        """Given two states, finds the associated distributions and returns the KL divergence."""
         lhs_dist = self.distribution_from_state(post)
         rhs_dist = self.distribution_from_state(prior)
         return torch.distributions.kl_divergence(lhs_dist, rhs_dist).mean()

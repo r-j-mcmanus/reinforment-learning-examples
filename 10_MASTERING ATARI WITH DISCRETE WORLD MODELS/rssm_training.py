@@ -12,7 +12,7 @@ from replay_memory import ReplayMemory
 
 def train_rssm(rssm: RSSM, replay_memory: ReplayMemory, horizon_length: int = 3,
                *, 
-               sequence_length: int = 5, batch_size: int = 3, epoch_count: int = 100) -> RSSM:
+               sequence_length: int = 5, batch_size: int = 50, epoch_count: int = 100) -> RSSM:
     """Trains an RSSM on sequences of observations and actions."""
     # Instantiate model
     optimizer = optim.AdamW(rssm.parameters(), lr=1e-3)
@@ -48,10 +48,10 @@ def train_rssm(rssm: RSSM, replay_memory: ReplayMemory, horizon_length: int = 3,
             for i, state_rollout in enumerate(past_rollouts):
                 # take the ith so we test against the ith step of the rollout
                 if i < len(state_rollout): # the end of the sequence will not have the full horizon
-                    kl_loss += beta * rssm.divergence_from_states(transition_state, state_rollout[i]) # KL divergence
+                    kl_loss += beta * rssm.kl_balancing_divergence(transition_state, state_rollout[i]) # KL divergence
             
             # Reconstruction loss, predicting next_obs from latent state
-            reconstruction_loss = rssm.observation_reconstruction_error(posterior_state, obs, h_t)
+            reconstruction_loss = rssm.kl_balancing_divergence(posterior_state, obs, h_t)
 
             # reward loss
             reward_loss = rssm.reward_reconstruction_error(posterior_state, reward, h_t)
