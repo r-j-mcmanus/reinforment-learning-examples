@@ -5,11 +5,11 @@ from torch.distributions import MultivariateNormal
 from torch import Tensor
 
 from state import State
+from constants import *
 
 
 class Transition(nn.Module):
-    def __init__(self, input_size: int, state_size: int,
-                 mean_only=False, activation=F.elu, min_stddev=1e-5):
+    def __init__(self, *, mean_only=False, activation=F.elu):
         """
         https://arxiv.org/pdf/1802.03006
 
@@ -29,18 +29,18 @@ class Transition(nn.Module):
             transition_stddev (nn.Linear): Layer to compute the stddev of the transition distribution.
         """
         super().__init__()
-        self.state_size = state_size
         self.mean_only = mean_only
-        self.min_stddev = min_stddev
+        self.min_stddev = Constants.Common.min_stddev
         self.activation = activation
 
-        self._hidden_size = 32
-        self.input_size = input_size
+        state_size = Constants.World.latent_state_dimension
+        hidden_size = Constants.Common.MLP_width
+        input_size = Constants.World.hidden_state_dimension
 
-        self.transition_fc1 = nn.Linear(self.input_size, self._hidden_size)
-        self.transition_fc2 = nn.Linear(self._hidden_size, self._hidden_size)
-        self.transition_mean = nn.Linear(self._hidden_size, state_size)
-        self.transition_stddev = nn.Linear(self._hidden_size, state_size)
+        self.transition_fc1 = nn.Linear(input_size, hidden_size)
+        self.transition_fc2 = nn.Linear(hidden_size, hidden_size)
+        self.transition_mean = nn.Linear(hidden_size, state_size)
+        self.transition_stddev = nn.Linear(hidden_size, state_size)
 
         self._init_weights()
 

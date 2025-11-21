@@ -61,6 +61,21 @@ class Transition(nn.Module):
         
         p(z_t| h_t) ~ N(mean(theta_1), stddev(theta_2))
         """
+        
+        # hidden = self.activation(self.transition_fc1(input))
+        # hidden = self.activation(self.transition_fc2(hidden))
+        
+        # # Output logits for categorical latent variables
+        # logits = torch.special.logit(hidden).view(-1, num_latents, num_categories)
+        
+        # # Compute probabilities
+        # probs = F.softmax(logits, dim=-1)
+        
+        # # Sample using Gumbel-Softmax
+        # sample = F.gumbel_softmax(logits, tau=temperature, hard=True)
+
+
+
         hidden = self.activation(self.transition_fc1(input))
         hidden = self.activation(self.transition_fc2(hidden))
         mean: Tensor = self.transition_mean(hidden)

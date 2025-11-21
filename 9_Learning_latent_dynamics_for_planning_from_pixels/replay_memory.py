@@ -42,7 +42,7 @@ class ReplayMemory(Memory):
     def __len__(self) -> int:
         return len(self._memory)
     
-    def sample_sequential(self, batch_size: int, sequence_length: int) -> Transition:
+    def sample_sequential(self) -> Transition:
         """
         Sample batch of sequences, each of length `sequence_length`.
         Sequences are consecutive transitions from memory.
@@ -55,6 +55,9 @@ class ReplayMemory(Memory):
             - reward: Torch.tensor with shape (batch_size, sequence_length, 1)
             - next_state: None
         """
+        sequence_length = Constants.World.sequence_length
+        batch_size = Constants.World.batch_size
+
         memory_size = len(self._memory)
         if memory_size < sequence_length:
             raise ValueError("Not enough transitions to form a sequence of the requested length.")

@@ -5,9 +5,10 @@ from torch.distributions import MultivariateNormal
 from torch import Tensor
 
 from state import State
+from constants import *
 
 class Posterior(nn.Module):
-    def __init__(self, input_size: int, state_size: int, 
+    def __init__(self, obs_size: int, *,
                  mean_only=False, activation=F.elu, min_stddev=1e-5):
         """
         https://arxiv.org/pdf/1802.03006
@@ -29,17 +30,19 @@ class Posterior(nn.Module):
             posterior_stddev (nn.Linear): Layer to compute the stddev of the posterior distribution.
         """
         super().__init__()
-        self.state_size = state_size
+        stich_state_dim = Constants.World.latent_state_dimension
+        hidden_state_dimension = Constants.World.hidden_state_dimension
+        input_size = 2 * stich_state_dim + hidden_state_dimension + obs_size # takes both mean and std of the stochastic state
         self.mean_only = mean_only
         self.min_stddev = min_stddev
         self.activation = activation
 
-        self._hidden_size = 32
+        hidden_size = Constants.Common.MLP_width
 
         # Posterior network
-        self.posterior_fc1 = nn.Linear(2 * state_size + input_size, self._hidden_size)
-        self.posterior_mean = nn.Linear(self._hidden_size, state_size)
-        self.posterior_stddev = nn.Linear(self._hidden_size, state_size)
+        self.posterior_fc1 = nn.Linear(input_size, hidden_size)
+        self.posterior_mean = nn.Linear(hidden_size, stich_state_dim)
+        self.posterior_stddev = nn.Linear(hidden_size, stich_state_dim)
 
         self._init_weights()
 

@@ -10,11 +10,10 @@ from posterior import Posterior
 from decoder import Decoder
 
 from collections import deque 
+from constants import *
 
 class RSSM(nn.Module):
-    def __init__(self, state_size: int, obs_size: int, action_size: int, 
-                 rnn_hidden_size=32, rnn_num_layers=1,
-                 mean_only=False, activation=F.elu, min_stddev=1e-5):
+    def __init__(self, obs_size: int, action_size: int, *, mean_only=False, activation=F.elu):
         """
         https://arxiv.org/pdf/1802.03006
         https://arxiv.org/pdf/1811.04551
@@ -46,17 +45,13 @@ class RSSM(nn.Module):
             _hn (Tensor): The hidden state of the RNN.
         """
         super(RSSM, self).__init__()
-        self.state_size = state_size
-        self.action_size = action_size
+        state_size = Constants.World.latent_state_dimension
+
         self.obs_size = obs_size
         self.mean_only = mean_only
-        self.min_stddev = min_stddev
         self.activation = activation
 
-        self._hidden_size = 32
-        self._rnn_hidden_size = rnn_hidden_size
-        self._rnn_num_layers = rnn_num_layers
-        self.decoder_hidden_size = 32
+        hidden_state_dimension = Constants.World.hidden_state_dimension
 
         # deterministic network
         # 1811.04551 uses rnn, but later dreamer models (2010.02193) use GRU RNNs (1406.1078)
@@ -68,21 +63,24 @@ class RSSM(nn.Module):
         #       r = sigmoid(W_r(x) + U_r(h))  -- how much past information to forget when computing new content
         #       h_candidate = torch.tanh(W_xh(x) + U_hh(r * h))
         #       h = (1 - z) * h_candidate + z * h  -- mix old with new directly
-        self._rnn = nn.GRU(state_size + action_size, rnn_hidden_size, rnn_num_layers)
+        # we use a single layer determanistic model and allow for complications in the state model.
+        # TODO test more layers?
+        self._rnn = nn.GRU(state_size + action_size, 
+                           hidden_state_dimension, 
+                           device=DEVICE) 
         
         # Transition network
-        self.transition = Transition(self._rnn_hidden_size, state_size)
+        self.transition = Transition()
 
         # Posterior network
-        post_input_size = self._rnn_hidden_size + self.obs_size
-        self.posterior_model = Posterior(post_input_size, state_size)
+        self.posterior_model = Posterior(self.obs_size)
 
         # State Decoder
-        decoder_input_size = self._rnn_hidden_size + state_size
+        decoder_input_size = hidden_state_dimension + state_size
         self.observation = Decoder(decoder_input_size, self.obs_size)
         self.reward = Decoder(decoder_input_size, 1)
-    
-    def rollout(self, initial_state: State, initial_hidden_state: Tensor, action: Tensor, horizon_length: int = 3) -> list[State]:
+
+    def rollout(self, initial_state: State, initial_hidden_state: Tensor, action: Tensor) -> list[State]:
         """predicts the next state from both the deterministic and stochastic space model given the 
         initial observation and actions up to the learning horizon_length. 
         
@@ -92,6 +90,8 @@ class RSSM(nn.Module):
         """
         deterministic_steps = []
         stochastic_steps = []
+
+        horizon_length = Constants.Behavior.imagination_horizon
 
         h = initial_hidden_state
         s = initial_state # predict what the state should be given the observation and the hidden state
@@ -106,14 +106,23 @@ class RSSM(nn.Module):
 
     def distribution_from_state(self, state: State) -> Distribution:
         """Given a state dict, returns the associated MultivariateNormal distribution."""
-        stddev = torch.clamp(state.stddev, min=self.min_stddev)
+        stddev = torch.clamp(state.stddev, min=Constants.Common.min_stddev)
         return MultivariateNormal(state.mean, torch.diag_embed(stddev))
 
     def divergence_from_states(self, post: State, prior: State) -> Tensor:
-        """Given two states, finds the associated distribtions and returns the KL divergence."""
-        lhs_dist = self.distribution_from_state(post)
-        rhs_dist = self.distribution_from_state(prior)
-        return torch.distributions.kl_divergence(lhs_dist, rhs_dist).mean()
+        """Given two states, finds the associated distribtions and returns the KL divergence. 
+        Uses KL balancing as learning the transition function is difficult and we want to 
+        avoid regularizing the representations toward a poorly trained prior"""
+        post_dist = self.distribution_from_state(post)
+        sg_post_dist = self.distribution_from_state(post.detach())
+        prior_dist = self.distribution_from_state(prior)
+        sg_prior_dist = self.distribution_from_state(prior.detach())
+        a = Constants.World.kl_balancing
+        kl_loss = (
+            torch.distributions.kl_divergence(sg_post_dist, prior_dist).mean() * a +
+            torch.distributions.kl_divergence(post_dist, sg_prior_dist).mean() * (1-a)
+        )
+        return kl_loss
 
     def latent_overshooting_kl(self, posteriors: deque[State], priors: deque[State], actions, hs: deque[Tensor], d_max: int):
         """
@@ -159,10 +168,9 @@ class RSSM(nn.Module):
         Returns:
             Tensor: next deterministic hidden state (batch_size, rnn_hidden_size).
         """
-        inputs = torch.cat([prev_state.squeeze(), prev_action], dim=1).unsqueeze(0)  # (1, batch_size, state_size + action_size)
-        _, h = self._rnn(inputs, h)
-        assert isinstance(h, torch.Tensor)
-        return h
+        inputs = torch.cat([prev_state, prev_action], dim=-1)  # (batch_size, state_size + action_size)
+        _, h = self._rnn(inputs.unsqueeze(dim=0), h.unsqueeze(dim=0)) 
+        return h.squeeze()
 
     def posterior(self, obs: Tensor, h: Tensor) -> State:
         """
@@ -182,28 +190,24 @@ class RSSM(nn.Module):
         """
         assert isinstance(h, torch.Tensor)
         prior = self.transition.forward(h)
-        inputs = torch.cat([prior.mean, prior.stddev, h, obs.unsqueeze(0)], dim=2)
+        inputs = torch.cat([prior.mean, prior.stddev, h, obs], dim=-1)
         return self.posterior_model(inputs)
     
     def prior(self, h: Tensor) -> State:
         return self.transition(h)
-    
+
     def observation_reconstruction_error(self, posterior_state: State, obs: Tensor, h: Tensor):
         """
         Taking a sample of the posterior states for MC intergration of the expectation over the posterior and
         using the observation model to move from the state space to observation space. I then find the mse 
         loss for my reconstruction vs the real observation
         """
-        assert isinstance(h, torch.Tensor)
-        inputs = torch.cat([h, posterior_state.sample], dim=2)
-        return nn.functional.mse_loss(self.observation(inputs), obs).mean() # use mse not log likelihood as the observation model is assumed to be Gaussian
-    
+        return nn.functional.mse_loss(self.observation(h, posterior_state.sample), obs).mean() # use mse not log likelihood as the observation model is assumed to be Gaussian
+
     def reward_reconstruction_error(self, posterior_state: State, reward: Tensor, h: Tensor):
         """
         Taking a sample of the posterior states for MC intergration of the expectation over the posterior and
         using the observation model to move from the state space to observation space. I then find the mse 
         loss for my reconstruction vs the real observation
         """
-        inputs = torch.cat([h, posterior_state.sample], dim=2)
-        return nn.functional.mse_loss(self.reward(inputs), reward).mean() # use mse not log likelihood as the observation model is assumed to be Gaussian
-    
+        return nn.functional.mse_loss(self.reward(h, posterior_state.sample), reward).mean() # use mse not log likelihood as the observation model is assumed to be Gaussian
