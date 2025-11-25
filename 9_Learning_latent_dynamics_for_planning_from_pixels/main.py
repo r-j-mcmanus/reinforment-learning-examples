@@ -1,5 +1,6 @@
 
 import gymnasium as gym
+from gymnasium.wrappers import RecordVideo
 from gymnasium import Env
 import torch
 from torch import Tensor
@@ -15,7 +16,10 @@ from latent_memory import LatentMemory
 
 def main():
     # Create the environment
-    env = gym.make('Ant-v5') #, render_mode = 'human')
+    env = gym.make('Ant-v5', render_mode = 'rgb_array')
+    env = RecordVideo(env, video_folder="videos/", name_prefix="ant_run",
+                      episode_trigger=lambda x: True)
+
     obs_size: int = env.observation_space.shape[0] # type: ignore
     action_size: int = env.action_space.shape[0] # type: ignore
 
@@ -29,12 +33,12 @@ def main():
     record_ep_step = 10 # how many episodes we allow before we record a new episode, allows for policy to change so we likely get an episode with new features
     memory = warm_up_memory(env, memory, seed_ep_count, max_num_steps)
 
-    # latent memeory 
+    # latent memory 
     latent_memory = LatentMemory()
 
     # Instantiate the RSSM model for planning
     rssm = RSSM(obs_size, action_size)
-    rssm = train_rssm(rssm, memory, latent_memory, beta_growth=True) # initial training on warm up data
+    rssm = train_rssm(rssm, memory, latent_memory, episode = -1, beta_growth=True) # initial training on warm up data
 
     critic = Critic()
     actor = Policy(action_size)
@@ -43,7 +47,7 @@ def main():
 
         record_ep = (episode % record_ep_step == 0) # bool indicating we record to episode in memory 
         
-        walk_env(env, max_num_steps, record_ep, memory, rssm, actor)
+        walk_env(env, max_num_steps, record_ep, memory, rssm, actor, episode)
         # we should move to recording episodes rather than steps
         # memory.new_episode()
 
@@ -51,13 +55,14 @@ def main():
 
         # train with the newly added episode
         if record_ep:
-            rssm = train_rssm(rssm, memory, latent_memory)
+            print(f'Recording episode {episode}')
+            rssm = train_rssm(rssm, memory, latent_memory, episode=episode)
     
     # Close the environment
     env.close()
 
 
-def walk_env(env: Env, max_num_steps: int, record_ep: bool, memory: ReplayMemory, rssm: RSSM, actor: Policy):
+def walk_env(env: Env, max_num_steps: int, record_ep: bool, memory: ReplayMemory, rssm: RSSM, actor: Policy, episode: int):
     # Reset the environment to get the initial observation
     
     with torch.no_grad():
@@ -68,7 +73,6 @@ def walk_env(env: Env, max_num_steps: int, record_ep: bool, memory: ReplayMemory
         s = rssm.posterior(obs, h).sample
 
         for step in range(max_num_steps):
-            # TODO follow a policy
             assert isinstance(obs, Tensor)
             action = actor.predict(s)
             
@@ -95,7 +99,7 @@ def walk_env(env: Env, max_num_steps: int, record_ep: bool, memory: ReplayMemory
 
             # Check if the episode is done
             if done:
-                print(f'walked {step} steps')
+                print(f'walked {step} steps in the env for episode {episode}')
                 # episode_durations.append(step + 1)
                 # plot_durations()
                 break
@@ -107,7 +111,7 @@ def walk_env(env: Env, max_num_steps: int, record_ep: bool, memory: ReplayMemory
 
 def warm_up_memory(env, memory: ReplayMemory, seed_ep_count: int, max_num_steps: int) -> ReplayMemory:
     obs, _ = env.reset()
-    obs = torch.tensor(obs, dtype=torch.float32, device=DEVICE).unsqueeze(0)
+    obs = torch.tensor(obs, dtype=torch.float32, device=DEVICE)
 
     while len(memory) < Constants.World.sequence_length:
         for step in range(max_num_steps):
@@ -124,7 +128,7 @@ def warm_up_memory(env, memory: ReplayMemory, seed_ep_count: int, max_num_steps:
             if terminated:
                 next_obs = None
             else:
-                next_obs = torch.tensor(next_obs, dtype=torch.float32, device=DEVICE).unsqueeze(0)
+                next_obs = torch.tensor(next_obs, dtype=torch.float32, device=DEVICE)
 
             # Store the transition in memory
             memory.push(obs, torch.from_numpy(action), next_obs, reward)

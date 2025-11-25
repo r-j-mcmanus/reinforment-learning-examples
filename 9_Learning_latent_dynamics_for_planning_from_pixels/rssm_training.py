@@ -15,19 +15,20 @@ import pandas as pd
 from constants import *
 
 
-def train_rssm(rssm: RSSM, replay_memory: ReplayMemory, latent_memory: LatentMemory, beta_growth: bool = False) -> RSSM:
+def train_rssm(rssm: RSSM, replay_memory: ReplayMemory, latent_memory: LatentMemory, episode: int, beta_growth: bool = False) -> RSSM:
     """Trains an RSSM on sequences of observations and actions.
     
     Arguments:
     rssm: RSSM
     replay_memory: ReplayMemory
     latent_memory: LatentMemory
+    episode: int - for logging
     beta_growth: bool - should beta grow from 0 to 1, set to True for initial training
     """
     # Instantiate model
     optimizer = optim.AdamW(rssm.parameters(), lr=1e-3)
 
-    horizon_length = Constants.Behavior.imagination_horizon
+    horizon_length = Constants.Behaviors.imagination_horizon
     sequence_length = Constants.World.sequence_length
     batch_size = Constants.World.batch_size
     epoch_count = Constants.World.epoch_count
@@ -35,7 +36,7 @@ def train_rssm(rssm: RSSM, replay_memory: ReplayMemory, latent_memory: LatentMem
     hidden_state_dimension = Constants.World.hidden_state_dimension
 
     # to track loss
-    df = pd.DataFrame(columns=['epoch', 'reward_loss', 'reconstruction_loss'] + [f'KL_({t},{i})' for t in range(sequence_length) for i in range(horizon_length) if i < t])
+    df = pd.DataFrame(columns=['episode', 'epoch', 'reward_loss', 'reconstruction_loss'] + [f'KL_({t},{i})' for t in range(sequence_length) for i in range(horizon_length) if i < t])
 
     for epoch in range(epoch_count):  # number of epochs
         loss = 0
@@ -48,18 +49,21 @@ def train_rssm(rssm: RSSM, replay_memory: ReplayMemory, latent_memory: LatentMem
         
         row = {}
         row['epoch'] = epoch
+        row['episode'] = episode
 
         for t in range(0, sequence_length):
-            # transition shape (batch_size, sequence_length, _)
+            # transition shape (batch_size, obs/action/reward dim)
             obs = sequence_transitions.state[:,t] # used in reconstruction and posterior
             action = sequence_transitions.action[:,t] # use to find the next deterministic step
             reward = sequence_transitions.reward[:,t] # used in reward reconstruction loss
             next_actions = sequence_transitions.action[:, t:t+horizon_length] # used in rollout
 
+            # print('obs.shape', obs.shape)
+
             posterior_state = rssm.posterior(obs, h_t) # predict what the state should be given the observation and the hidden state
             transition_state: State = rssm.transition(h_t) # predict what the state should be given the hidden state
 
-            # maybe add lag here to store more uncorrilated states improving sampling?
+            # maybe add lag here to store more uncorrelated states improving sampling?
             latent_memory.add(posterior_state.sample, h_t) # maybe take mean instead?
 
             # getting the diagonal lines in fig 3 c of 1811.04551, does not take the left most node
@@ -87,7 +91,7 @@ def train_rssm(rssm: RSSM, replay_memory: ReplayMemory, latent_memory: LatentMem
             # reward loss
             reward_loss = rssm.reward_reconstruction_error(posterior_state, reward, h_t)
 
-            loss += reconstruction_loss + reward_loss - kl_loss
+            loss += reconstruction_loss + reward_loss + kl_loss
             
             # h for the next loop
             h_t = rssm.deterministic_step(posterior_state.sample, action, h_t)

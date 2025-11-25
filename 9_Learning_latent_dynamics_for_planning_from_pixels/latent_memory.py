@@ -13,14 +13,14 @@ class LatentMemory:
         self.head = 0 # for tracking were we add to on the memory is at its max size
 
     def sample(self) -> tuple[Tensor, Tensor]:
-        """returns Constants.Behavior.trajectory_count samples of stochastic world states that were used in training the RSSM.
-        Sampled with replacment as the actor is probabalistic.
+        """returns Constants.Behaviour.trajectory_count samples of stochastic world states that were used in training the RSSM.
+        Sampled with replacement as the actor is probabilistic.
         
         Return
         ------
-        tuple[Tensor, Tensor]: stack of stochastic states, stack of determanistic states 
+        tuple[Tensor, Tensor]: stack of stochastic states, stack of deterministic states 
         """
-        n = Constants.Behavior.trajectory_count
+        n = Constants.Behaviors.trajectory_count
 
         # Check if enough rows exist
         total_rows = self._s.size(0)

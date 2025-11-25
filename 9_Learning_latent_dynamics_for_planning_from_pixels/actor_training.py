@@ -39,7 +39,7 @@ def latent_learning(rssm: RSSM, latent_memory: LatentMemory, critic: Critic, act
     # soft update the target networks
     # larger UPDATE_DELAY reduces variance
     # allowing for critic to represent policy by allowing multiple changes based on policy
-    #if step % Constants.Behavior.slow_critic_update_interval == 0:
+    #if step % Constants.Behaviour.slow_critic_update_interval == 0:
     actor.soft_update()
     critic.soft_update()
 
@@ -49,14 +49,14 @@ def compute_lambda_targets(rewards: Tensor, target_values: Tensor, gamma: float 
     rewards: [T] tensor
     target_values: [T] tensor
     """
-    H = Constants.Behavior.imagination_horizon
-    L = Constants.Behavior.lambda_target_parameter
+    H = Constants.Behaviors.imagination_horizon
+    L = Constants.Behaviors.lambda_target_parameter
 
     # TODO I need to make gamma from p(gamma | h, s)
 
     V_targets = []
-    V_next = rewards[-1] + gamma * target_values[-1] # the last step isnt itterative
-    # V_targets.append(V_next) we dont use the final step in the sumations eq.5 or eq.6 
+    V_next = rewards[-1] + gamma * target_values[-1] # the last step isnt iterative
+    # V_targets.append(V_next) we dont use the final step in the summations eq.5 or eq.6 
 
     # go backwards as the early are defined in terms of the latter
     for t in reversed(range(H)):
@@ -80,16 +80,16 @@ def dream_sequence(rssm: RSSM, actor: Policy, latent_memory: LatentMemory) -> tu
 
     Returns
     -------
-    torch.Tensor - shape = (horizon_length, batch_size, hidden_dimention + state_dimention)
+    torch.Tensor - shape = (horizon_length, batch_size, hidden_dimension + state_dimension)
     """
     # this comes directly from env interaction, and so isnt a 'dream'
-    s, h = latent_memory.sample() # inintal states, shape - (trajectory_count, (hidden|stoch)_state_dim)
+    s, h = latent_memory.sample() # initial states, shape - (trajectory_count, (hidden|stoch)_state_dim)
 
     dreamt_h = []
     dreamt_s = []
 
     # let the actor explore the latent space
-    for _ in range(Constants.Behavior.imagination_horizon):
+    for _ in range(Constants.Behaviors.imagination_horizon):
         action = actor.predict(s)
         h = rssm.deterministic_step(s, action, h)
         s = rssm.transition(h).sample

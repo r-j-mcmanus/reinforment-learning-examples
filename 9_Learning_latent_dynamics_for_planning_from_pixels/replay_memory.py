@@ -26,7 +26,7 @@ class Memory:
 
 class ReplayMemory(Memory):
     #TODO go from steps to episodes
-    # sample episode proportiaonl to length
+    # sample episode proportional to length
     # the uniform step in episode
     def __init__(self, capacity): 
         # from doc: Once a bounded length deque is full, when new items are added, a corresponding number of items are discarded from the opposite end.
@@ -34,8 +34,10 @@ class ReplayMemory(Memory):
 
     def push(self, *args):
         state, action, next_state, reward = args
-        if len(state.shape) != 2:
+        if len(state.shape) == 2:
             a = 1
+        if len(reward) != 1:
+            a=1
         self._memory.append(Transition(*args))
 
     def sample(self, batch_size: int) -> list[Transition]:
@@ -82,10 +84,10 @@ class ReplayMemory(Memory):
             # todo what should we do about early ending in seq?
             seq = Transition(*zip(*seq)) 
             seq = Transition(
-                state=torch.cat(seq.state), # an element of seq.state is shape [1, observation_size], so cat not stack
+                state=torch.stack(seq.state),
                 action=torch.stack(seq.action),
                 reward=torch.stack(seq.reward),
-                next_state=None, # we dont need to worry about the next state being none
+                next_state=None, # TODO do we need to worry about the next state being none?
             )
             sequences.append(seq)
         

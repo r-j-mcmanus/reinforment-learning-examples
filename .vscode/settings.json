@@ -3,8 +3,13 @@
         "diag"
     ],
     "cSpell.words": [
+        "isnt",
+        "minibatch",
+        "outputed",
         "rsample",
         "RSSM",
-        "softplus"
+        "softplus",
+        "stoch",
+        "unflatten"
     ]
 }

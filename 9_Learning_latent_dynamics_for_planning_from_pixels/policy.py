@@ -16,42 +16,42 @@ from state import State
 
 
 class Policy:
-    def __init__(self, actions_dimention: int):
-        state_dimention = Constants.World.latent_state_dimension
-        self.stabalising_net = StabilisingPolicyNet(state_dimention, actions_dimention)
-        self.target_net = TargetPolicyNet(state_dimention, actions_dimention)
+    def __init__(self, actions_dimension: int):
+        state_dimension = Constants.World.latent_state_dimension
+        self.stabilising_net = StabilisingPolicyNet(state_dimension, actions_dimension)
+        self.target_net = TargetPolicyNet(state_dimension, actions_dimension)
 
     def optimise(self, critic: Critic, L_targets: Tensor, dreamt_s: Tensor):
-        self.stabalising_net.optimise(critic, L_targets, dreamt_s)
+        self.stabilising_net.optimise(critic, L_targets, dreamt_s)
 
     def soft_update(self):
-        self.target_net.soft_update(self.stabalising_net)
+        self.target_net.soft_update(self.stabilising_net)
 
     def predict(self, state: Tensor) -> Tensor:
-        return self.stabalising_net(state).sample
+        return self.stabilising_net(state).sample
 
 
 class ContinuousPolicyNet(nn.Module):
-    def __init__(self, state_dimention: int, actions_dimention: int, *, mean_only = False, activation_function=F.elu):
+    def __init__(self, state_dimension: int, actions_dimension: int, *, mean_only = False, activation_function=F.elu):
         """A fully connected feed forward NN to model the policy function.
 
         arguments
         ---------
         n_observations: int
-            The number of observations of the enviroment state that we pass to the model
-        actions_dimention: int
-            The dimentionality of the continuous action space
+            The number of observations of the environment state that we pass to the model
+        actions_dimension: int
+            The dimensionality of the continuous action space
         """
         super().__init__()
 
-        self.action_dim = actions_dimention
+        self.action_dim = actions_dimension
 
-        self.layer_1 = nn.Linear(state_dimention, 128)
+        self.layer_1 = nn.Linear(state_dimension, 128)
         self.layer_2 = nn.Linear(128, 128)
-        self.layer_mean = nn.Linear(128, actions_dimention)
-        self.layer_std = nn.Linear(128, actions_dimention)
-        # self.layer_std = nn.Linear(128, actions_dimention * actions_dimention) would also need to make it posative definite!
-        # can be easly done by doing self.layer_lower_triangular (L)
+        self.layer_mean = nn.Linear(128, actions_dimension)
+        self.layer_std = nn.Linear(128, actions_dimension)
+        # self.layer_std = nn.Linear(128, actions_dimension * actions_dimension) would also need to make it positive definite!
+        # can be easily done by doing self.layer_lower_triangular (L)
         # and std = L * L.transpose
 
         self.activation_function = activation_function
@@ -68,7 +68,7 @@ class ContinuousPolicyNet(nn.Module):
                 nn.init.zeros_(m.bias)
                 
     def forward(self, x: Tensor) -> State:
-        """Called with either a single observation of the enviroment to predict the best next action, or with batches during optimisation"""
+        """Called with either a single observation of the environment to predict the best next action, or with batches during optimisation"""
         x = self.activation_function(self.layer_1(x))
         x = self.activation_function(self.layer_2(x))
         mean = self.layer_mean(x)
@@ -78,21 +78,21 @@ class ContinuousPolicyNet(nn.Module):
 
 
 class DiscretePolicyNet(nn.Module):
-    def __init__(self, state_dimention: int, actions_dimention: int, *, activation_function=F.elu):
+    def __init__(self, state_dimension: int, actions_dimension: int, *, activation_function=F.elu):
         """A fully connected feed forward NN to model the policy function.
 
         arguments
         ---------
         n_observations: int
-            The number of observations of the enviroment state that we pass to the model
-        actions_dimention: int
-            The dimentionality of the continuous action space
+            The number of observations of the environment state that we pass to the model
+        actions_dimension: int
+            The dimensionality of the continuous action space
         """
         super().__init__()
 
-        self.layer_1 = nn.Linear(state_dimention, 128)
+        self.layer_1 = nn.Linear(state_dimension, 128)
         self.layer_2 = nn.Linear(128, 128)
-        self.layer_3 = nn.Linear(128, actions_dimention)
+        self.layer_3 = nn.Linear(128, actions_dimension)
 
         self.activation_function = activation_function
 
@@ -106,9 +106,9 @@ class DiscretePolicyNet(nn.Module):
 
     
 class StabilisingPolicyNet(ContinuousPolicyNet):
-    def __init__(self, state_dimention: int, actions_dimention: int):
-        super().__init__(state_dimention, actions_dimention)
-        self.optimizer = optim.AdamW(self.parameters(), lr=Constants.Behavior.actor_learning_rate, amsgrad=True)
+    def __init__(self, state_dimension: int, actions_dimension: int):
+        super().__init__(state_dimension, actions_dimension)
+        self.optimizer = optim.AdamW(self.parameters(), lr=Constants.Behaviors.actor_learning_rate, amsgrad=True)
 
         # by passing self.parameters, the optimiser knows which network is optimised
 
@@ -117,13 +117,13 @@ class StabilisingPolicyNet(ContinuousPolicyNet):
         
         See eq 6 in 2010.02193
 
-        the loss is the reinfocement + dynamics backpropigation + entropy regularization
+        the loss is the reinforcement + dynamics back-propagation + entropy regularization
         marginalized over the action probability and the world parameters
 
         arguments
         ---------
-        critic: Critic - the critic netword for predicting the state value
-        L_targets: Tensor - the Lambda proces state value from the target network
+        critic: Critic - the critic network for predicting the state value
+        L_targets: Tensor - the Lambda process state value from the target network
         dreamt_s: Tensor - states dreams sequences for the trajectory we train over
         """
         # dreamt_s.shape = ([sequence_length, trajectory_count, latent_state_dimension])
@@ -132,7 +132,7 @@ class StabilisingPolicyNet(ContinuousPolicyNet):
         # 0 for continuous actions
         # 1 for discrete actions
         rho = 0.5 # to test both 
-        eta = Constants.Behavior.actor_entopy_loss_scale
+        eta = Constants.Behaviors.actor_entropy_loss_scale
 
         unflatten_shape = dreamt_s.shape[:-1]
 
@@ -167,13 +167,13 @@ class StabilisingPolicyNet(ContinuousPolicyNet):
         self.optimizer.step()
 
 class TargetPolicyNet(ContinuousPolicyNet):
-    def __init__(self, state_dimention: int, actions_dimention: int):
-        super().__init__(state_dimention, actions_dimention)
+    def __init__(self, state_dimension: int, actions_dimension: int):
+        super().__init__(state_dimension, actions_dimension)
 
     def soft_update(self, stabilising_net: StabilisingPolicyNet):
         stabilising_net_state_dict = stabilising_net.state_dict()
         target_net_state_dict = self.state_dict()
-        t = Constants.Behavior.tau
+        t = Constants.Behaviors.tau
         for key in stabilising_net_state_dict:
             target_net_state_dict[key] = stabilising_net_state_dict[key]*t + target_net_state_dict[key]*(1-t)
         self.load_state_dict(target_net_state_dict)

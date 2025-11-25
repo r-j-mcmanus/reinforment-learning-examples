@@ -91,7 +91,7 @@ class RSSM(nn.Module):
         deterministic_steps = []
         stochastic_steps = []
 
-        horizon_length = Constants.Behavior.imagination_horizon
+        horizon_length = Constants.Behaviors.imagination_horizon
 
         h = initial_hidden_state
         s = initial_state # predict what the state should be given the observation and the hidden state

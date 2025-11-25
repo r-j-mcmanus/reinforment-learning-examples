@@ -6,4 +6,5 @@ torch
 torchvision
 gymnasium[classic_control]
 gymnasium[mujoco]
+gymnasium[other]
 seaborn
