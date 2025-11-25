@@ -7,7 +7,7 @@ from critic import Critic
 from policy import Policy
 from rssm import RSSM
 
-def latent_lerning(rssm: RSSM, latent_memory: LatentMemory, critic: Critic, actor: Policy):    
+def latent_learning(rssm: RSSM, latent_memory: LatentMemory, critic: Critic, actor: Policy):    
     dreamt_s, dreamt_h = dream_sequence(rssm, actor, latent_memory)
 
     unflatten_shape = dreamt_s.shape[:-1]
@@ -28,13 +28,13 @@ def latent_lerning(rssm: RSSM, latent_memory: LatentMemory, critic: Critic, acto
     L_targets = compute_lambda_targets(rewards, target_values)
 
     # find the predicted state value for the stabilising critic from the current state 
-    predicted_state_values = critic.predicted(dreamt_s_flatten)
+    predicted_state_values = critic.predicted(dreamt_s_flatten.detach())
     predicted_state_values = predicted_state_values.view(*unflatten_shape, -1) 
 
     # optimise the stabilising net based on the minibatch
+    actor.optimise(critic, L_targets, dreamt_s.detach()) 
     critic.optimise(predicted_state_values, L_targets.detach())
 
-    actor.optimise(critic, L_targets, dreamt_s) 
 
     # soft update the target networks
     # larger UPDATE_DELAY reduces variance

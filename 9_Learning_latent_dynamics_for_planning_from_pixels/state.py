@@ -38,6 +38,10 @@ class State:
         dist = MultivariateNormal(self.mean.squeeze(), torch.diag_embed(self.stddev.squeeze()))
         return dist.log_prob(self.sample)
     
+    def entropy(self) -> Tensor:
+        dist = MultivariateNormal(self.mean.squeeze(), torch.diag_embed(self.stddev.squeeze()))
+        return dist.entropy()
+    
     def view(self, *args):
         return State(
             mean=self.mean.view(*args) ,

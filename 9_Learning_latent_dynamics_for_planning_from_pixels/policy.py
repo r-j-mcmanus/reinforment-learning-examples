@@ -158,8 +158,7 @@ class StabilisingPolicyNet(ContinuousPolicyNet):
             dynamic_backpropagation = 0
 
         # TODO when moving to non-diag covar matrix, will need changing to generic det 
-        predicted_actions_std_det = predicted_actions_state_flatten.stddev.view(*dreamt_s.shape[:-1], -1).prod(-1)
-        entropy_regularizer = - eta * 0.5 * torch.log(predicted_actions_std_det).sum(dim=0).mean()
+        entropy_regularizer = - eta * predicted_actions_state.entropy().sum(dim=0).mean()
         
         actor_loss = reinforce_loss + dynamic_backpropagation + entropy_regularizer
         self.optimizer.zero_grad()

@@ -8,7 +8,7 @@ from rssm import RSSM
 from rssm_training import train_rssm
 from constants import *
 from replay_memory import ReplayMemory
-from actor_training import latent_lerning
+from actor_training import latent_learning
 from critic import Critic
 from policy import Policy
 from latent_memory import LatentMemory
@@ -47,7 +47,7 @@ def main():
         # we should move to recording episodes rather than steps
         # memory.new_episode()
 
-        latent_lerning(rssm, latent_memory, critic, actor)
+        latent_learning(rssm, latent_memory, critic, actor)
 
         # train with the newly added episode
         if record_ep:

@@ -33,6 +33,9 @@ class ReplayMemory(Memory):
         self._memory: deque[Transition] = deque([], maxlen=capacity)
 
     def push(self, *args):
+        state, action, next_state, reward = args
+        if len(state.shape) != 2:
+            a = 1
         self._memory.append(Transition(*args))
 
     def sample(self, batch_size: int) -> list[Transition]:
@@ -86,6 +89,7 @@ class ReplayMemory(Memory):
             )
             sequences.append(seq)
         
+        # issue! sometimes we store h . s and sometimes h , s
         return Transition(
             state=torch.stack([i.state for i in sequences]),
             action=torch.stack([i.action for i in sequences]),
