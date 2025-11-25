@@ -131,7 +131,7 @@ class StabilisingPolicyNet(ContinuousPolicyNet):
         
         # 0 for continuous actions
         # 1 for discrete actions
-        rho = 0.5 # to test both 
+        rho = Constants.Behaviors.actor_gradient_mixing # 0.5 # to test both 
         eta = Constants.Behaviors.actor_entropy_loss_scale
 
         unflatten_shape = dreamt_s.shape[:-1]
@@ -148,19 +148,25 @@ class StabilisingPolicyNet(ContinuousPolicyNet):
         if rho != 0:
             reinforce_weights = (L_targets - q_values).squeeze(-1).detach()
             log_prob = predicted_actions_state.sample_log_prob()
-            reinforce_loss = - rho * (log_prob * reinforce_weights).sum(dim=0).mean()
+            reinforce_loss = rho * (log_prob * reinforce_weights).sum(dim=0).mean()
         else:
             reinforce_loss = 0
 
         if rho != 1:
-            dynamic_backpropagation = - (1 - rho) * L_targets.squeeze(-1).sum(dim=0).mean()
+            dynamic_backpropagation = (1 - rho) * L_targets.squeeze(-1).sum(dim=0).mean()
         else:
             dynamic_backpropagation = 0
 
         # TODO when moving to non-diag covar matrix, will need changing to generic det 
-        entropy_regularizer = - eta * predicted_actions_state.entropy().sum(dim=0).mean()
+        entropy_regularizer = eta * predicted_actions_state.entropy().sum(dim=0).mean()
         
-        actor_loss = reinforce_loss + dynamic_backpropagation + entropy_regularizer
+        actor_loss = - (reinforce_loss + dynamic_backpropagation) + entropy_regularizer
+        
+        print(f'actor_loss {actor_loss.item():4f}'
+              f' reinforce_loss {reinforce_loss if isinstance(reinforce_loss,int) else reinforce_loss.item():4f}'
+              f' dynamic_backpropagation {dynamic_backpropagation if isinstance(dynamic_backpropagation,int) else dynamic_backpropagation.item():4f}'
+              f' entropy_regularizer {entropy_regularizer if isinstance(entropy_regularizer,int) else entropy_regularizer.item():4f}')
+
         self.optimizer.zero_grad()
         actor_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.parameters(), 100)
