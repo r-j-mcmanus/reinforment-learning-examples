@@ -32,9 +32,9 @@ def latent_learning(rssm: RSSM, latent_memory: LatentMemory, critic: Critic, act
     predicted_state_values = predicted_state_values.view(*unflatten_shape, -1) 
 
     # optimise the stabilising net based on the minibatch
-    actor.optimise(critic, L_targets, dreamt_s.detach()) 
-    critic.optimise(predicted_state_values, L_targets.detach())
-
+    actor_loss = actor.optimise(critic, L_targets, dreamt_s.detach()) 
+    critic_loss_scaler = critic.optimise(predicted_state_values, L_targets.detach())
+    print(f'critic_loss_scaler {critic_loss_scaler}')
 
     # soft update the target networks
     # larger UPDATE_DELAY reduces variance

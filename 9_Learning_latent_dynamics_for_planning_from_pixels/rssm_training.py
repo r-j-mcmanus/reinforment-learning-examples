@@ -4,18 +4,18 @@ from collections import deque
 
 import torch
 import torch.optim as optim
+import pandas as pd
 
 from rssm import RSSM
 from state import State
 from replay_memory import ReplayMemory
 from latent_memory import LatentMemory
-
-import pandas as pd
+from plots import plot_rssm_data
 
 from constants import *
 
 
-def train_rssm(rssm: RSSM, replay_memory: ReplayMemory, latent_memory: LatentMemory, episode: int, beta_growth: bool = False) -> RSSM:
+def train_rssm(rssm: RSSM, replay_memory: ReplayMemory, latent_memory: LatentMemory, episode: int, df: pd.DataFrame | None = None, beta_growth: bool = False) -> tuple[RSSM, pd.DataFrame]:
     """Trains an RSSM on sequences of observations and actions.
     
     Arguments:
@@ -35,8 +35,10 @@ def train_rssm(rssm: RSSM, replay_memory: ReplayMemory, latent_memory: LatentMem
     beta_growth_rate = Constants.World.beta_growth_rate
     hidden_state_dimension = Constants.World.hidden_state_dimension
 
-    # to track loss
-    df = pd.DataFrame(columns=['episode', 'epoch', 'reward_loss', 'reconstruction_loss'] + [f'KL_({t},{i})' for t in range(sequence_length) for i in range(horizon_length) if i < t])
+    if df is None:
+        # to track loss
+        df = pd.DataFrame(columns=['episode', 'epoch', 'reward_loss', 'reconstruction_loss'] + [f'kl_({t},{i})' for t in range(sequence_length) for i in range(horizon_length) if i < t])
+    assert isinstance(df, pd.DataFrame)
 
     for epoch in range(epoch_count):  # number of epochs
         loss = 0
@@ -73,6 +75,7 @@ def train_rssm(rssm: RSSM, replay_memory: ReplayMemory, latent_memory: LatentMem
             #  j = sequence_start is the last observation the state is conditioned on
             past_rollouts.append(s_it)
 
+            # TODO maybe try re-doing this to make it clearer?
             kl_loss = 0
             # prevents early collapse of latent space
             beta = min(1.0, (epoch+1) / beta_growth_rate) if beta_growth else 1 
@@ -98,6 +101,8 @@ def train_rssm(rssm: RSSM, replay_memory: ReplayMemory, latent_memory: LatentMem
 
             row['reconstruction_loss'] = float(reconstruction_loss.item())
             row['reward_loss'] = float(reward_loss.item())
+            row['kl_loss'] = float(kl_loss.item())
+            row['beta'] = beta
 
         assert isinstance(loss, torch.Tensor)
         # Back-propagation
@@ -112,5 +117,6 @@ def train_rssm(rssm: RSSM, replay_memory: ReplayMemory, latent_memory: LatentMem
         print(f"Epoch {epoch}, Total Loss: {loss.item():.4f}")
 
     df.to_csv('rssm_losses.csv')
+    plot_rssm_data(df, episode)
 
-    return rssm
+    return rssm, df

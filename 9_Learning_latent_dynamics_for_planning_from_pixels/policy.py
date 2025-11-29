@@ -21,8 +21,9 @@ class Policy:
         self.stabilising_net = StabilisingPolicyNet(state_dimension, actions_dimension)
         self.target_net = TargetPolicyNet(state_dimension, actions_dimension)
 
-    def optimise(self, critic: Critic, L_targets: Tensor, dreamt_s: Tensor):
-        self.stabilising_net.optimise(critic, L_targets, dreamt_s)
+    def optimise(self, critic: Critic, L_targets: Tensor, dreamt_s: Tensor) -> float:
+        policy_loss = self.stabilising_net.optimise(critic, L_targets, dreamt_s)
+        return policy_loss
 
     def soft_update(self):
         self.target_net.soft_update(self.stabilising_net)
@@ -112,7 +113,7 @@ class StabilisingPolicyNet(ContinuousPolicyNet):
 
         # by passing self.parameters, the optimiser knows which network is optimised
 
-    def optimise(self, critic: Critic, L_targets: Tensor, dreamt_s: Tensor):
+    def optimise(self, critic: Critic, L_targets: Tensor, dreamt_s: Tensor) -> float:
         """Update actor policy using the sampled policy gradient
         
         See eq 6 in 2010.02193
@@ -123,12 +124,9 @@ class StabilisingPolicyNet(ContinuousPolicyNet):
         arguments
         ---------
         critic: Critic - the critic network for predicting the state value
-        L_targets: Tensor - the Lambda process state value from the target network
-        dreamt_s: Tensor - states dreams sequences for the trajectory we train over
-        """
-        # dreamt_s.shape = ([sequence_length, trajectory_count, latent_state_dimension])
-        # L_targets = ([sequence_length, trajectory_count, 1])
-        
+        L_targets: Tensor - shape = (imagination_horizon, trajectory_count, 1), the Lambda process state value from the target network
+        dreamt_s: Tensor -  shape = (imagination_horizon, trajectory_count, latent_state_dimension), the dream sequence of states for the trajectory we train over
+        """        
         # 0 for continuous actions
         # 1 for discrete actions
         rho = Constants.Behaviors.actor_gradient_mixing # 0.5 # to test both 
@@ -157,10 +155,10 @@ class StabilisingPolicyNet(ContinuousPolicyNet):
         else:
             dynamic_backpropagation = 0
 
-        # TODO when moving to non-diag covar matrix, will need changing to generic det 
+        # TODO when moving to non-diag covar matrix, will need changing to generic det, this is fine for now
         entropy_regularizer = eta * predicted_actions_state.entropy().sum(dim=0).mean()
         
-        actor_loss = - (reinforce_loss + dynamic_backpropagation) + entropy_regularizer
+        actor_loss = (reinforce_loss + dynamic_backpropagation) - entropy_regularizer
         
         print(f'actor_loss {actor_loss.item():4f}'
               f' reinforce_loss {reinforce_loss if isinstance(reinforce_loss,int) else reinforce_loss.item():4f}'
@@ -171,6 +169,9 @@ class StabilisingPolicyNet(ContinuousPolicyNet):
         actor_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.parameters(), 100)
         self.optimizer.step()
+
+        return actor_loss.item()
+
 
 class TargetPolicyNet(ContinuousPolicyNet):
     def __init__(self, state_dimension: int, actions_dimension: int):
