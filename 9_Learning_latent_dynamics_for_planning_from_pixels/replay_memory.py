@@ -40,7 +40,7 @@ class ReplayMemory(Memory):
             a=1
         self._memory.append(Transition(*args))
 
-    def sample(self, batch_size: int) -> list[Transition]:
+    def sample(self, batch_size: int = Constants.World.batch_size) -> list[Transition]:
         """As described in 1312.5602: Algorithm 1, Sample random minibatch of transitions"""
         return random.sample(self._memory, batch_size)
     

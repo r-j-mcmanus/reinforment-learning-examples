@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import MultivariateNormal, Distribution
 from torch import Tensor
+import torch.optim as optim
 
 from state import State
 from transition import Transition
@@ -79,6 +80,9 @@ class RSSM(nn.Module):
         decoder_input_size = hidden_state_dimension + state_size
         self.observation = Decoder(decoder_input_size, self.obs_size)
         self.reward = Decoder(decoder_input_size, 1)
+
+        self.optimizer = optim.AdamW(self.parameters(), lr=1e-3)
+
 
     def rollout(self, initial_state: State, initial_hidden_state: Tensor, action: Tensor) -> list[State]:
         """predicts the next state from both the deterministic and stochastic space model given the 
@@ -170,7 +174,7 @@ class RSSM(nn.Module):
         """
         inputs = torch.cat([prev_state, prev_action], dim=-1)  # (batch_size, state_size + action_size)
         _, h = self._rnn(inputs.unsqueeze(dim=0), h.unsqueeze(dim=0)) 
-        return h.squeeze()
+        return h.squeeze(0)
 
     def posterior(self, obs: Tensor, h: Tensor) -> State:
         """
@@ -189,6 +193,10 @@ class RSSM(nn.Module):
         Approximate the Bayesian posterior using a NN that takes the the prior and current observation.
         """
         assert isinstance(h, torch.Tensor)
+        # we can remove the transition from this, probably causing a longer training time?
+        # this is as p = f(h) and q = f_2(h, p, o) = f_2(h, f(h), o)
+        # so if q = f_3(h, o) it can match f_2(h, f(h), o)
+        # would probably make for a more robust method as p could change distribution and you wouldnt need to change q
         prior = self.transition.forward(h)
         inputs = torch.cat([prior.mean, prior.stddev, h, obs], dim=-1)
         return self.posterior_model(inputs)
@@ -202,7 +210,7 @@ class RSSM(nn.Module):
         using the observation model to move from the state space to observation space. I then find the mse 
         loss for my reconstruction vs the real observation
         """
-        return nn.functional.mse_loss(self.observation(h, posterior_state.sample), obs).mean() # use mse not log likelihood as the observation model is assumed to be Gaussian
+        return nn.functional.mse_loss(self.observation(h, posterior_state.mean), obs).mean() # use mse not log likelihood as the observation model is assumed to be Gaussian
 
     def reward_reconstruction_error(self, posterior_state: State, reward: Tensor, h: Tensor):
         """
@@ -210,4 +218,4 @@ class RSSM(nn.Module):
         using the observation model to move from the state space to observation space. I then find the mse 
         loss for my reconstruction vs the real observation
         """
-        return nn.functional.mse_loss(self.reward(h, posterior_state.sample), reward).mean() # use mse not log likelihood as the observation model is assumed to be Gaussian
+        return nn.functional.mse_loss(self.reward(h, posterior_state.mean), reward).mean() # use mse not log likelihood as the observation model is assumed to be Gaussian

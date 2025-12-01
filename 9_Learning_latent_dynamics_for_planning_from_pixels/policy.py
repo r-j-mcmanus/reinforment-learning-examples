@@ -75,6 +75,10 @@ class ContinuousPolicyNet(nn.Module):
         mean = self.layer_mean(x)
         stddev = F.softplus(self.layer_std(x)) + Constants.Common.min_stddev
         sample = mean if self.mean_only else MultivariateNormal(mean.squeeze(), torch.diag_embed(stddev.squeeze())).rsample()
+        
+        sample = torch.clamp(sample, min=-1.0, max=1.0)
+        mean = torch.clamp(mean, min=-1.0, max=1.0)  # Optional: clip mean for consistency
+
         return State(mean, stddev, sample)    
 
 
@@ -124,7 +128,7 @@ class StabilisingPolicyNet(ContinuousPolicyNet):
         arguments
         ---------
         critic: Critic - the critic network for predicting the state value
-        L_targets: Tensor - shape = (imagination_horizon, trajectory_count, 1), the Lambda process state value from the target network
+        L_targets: Tensor - shape = (imagination_horizon, trajectory_count), the Lambda process state value from the target network
         dreamt_s: Tensor -  shape = (imagination_horizon, trajectory_count, latent_state_dimension), the dream sequence of states for the trajectory we train over
         """        
         # 0 for continuous actions
@@ -132,39 +136,36 @@ class StabilisingPolicyNet(ContinuousPolicyNet):
         rho = Constants.Behaviors.actor_gradient_mixing # 0.5 # to test both 
         eta = Constants.Behaviors.actor_entropy_loss_scale
 
-        unflatten_shape = dreamt_s.shape[:-1]
-
         #flatten for passing though nets
-        dreamt_s_flatten = dreamt_s.view(-1, dreamt_s.size(-1))
-        predicted_actions_state_flatten: State = self(dreamt_s_flatten)
-        q_values_flatten = critic.predicted(dreamt_s_flatten)
+        predicted_action: State = self(dreamt_s)
+        predicted_state_values = critic.predicted(dreamt_s).detach()
         
-        #unflatten to get structure for sum and mean
-        q_values = q_values_flatten.view(*unflatten_shape, -1)
-        predicted_actions_state: State = predicted_actions_state_flatten.view(*unflatten_shape, -1) 
-
         if rho != 0:
-            reinforce_weights = (L_targets - q_values).squeeze(-1).detach()
-            log_prob = predicted_actions_state.sample_log_prob()
-            reinforce_loss = rho * (log_prob * reinforce_weights).sum(dim=0).mean()
+            # typically for discreet control
+            reinforce_weights = (L_targets - predicted_state_values).squeeze(-1).detach()
+            log_prob = predicted_action.sample_log_prob()
+            reinforce_loss = rho * (log_prob * reinforce_weights).mean()
         else:
             reinforce_loss = 0
 
         if rho != 1:
-            dynamic_backpropagation = (1 - rho) * L_targets.squeeze(-1).sum(dim=0).mean()
+            # typically for continuous control
+            dynamic_backpropagation = (1 - rho) * L_targets.mean()
         else:
             dynamic_backpropagation = 0
 
         # TODO when moving to non-diag covar matrix, will need changing to generic det, this is fine for now
-        entropy_regularizer = eta * predicted_actions_state.entropy().sum(dim=0).mean()
+        entropy_regularizer = eta * predicted_action.entropy().mean()
         
-        actor_loss = (reinforce_loss + dynamic_backpropagation) - entropy_regularizer
+        actor_loss = - (reinforce_loss + dynamic_backpropagation + entropy_regularizer)
         
+        """
         print(f'actor_loss {actor_loss.item():4f}'
               f' reinforce_loss {reinforce_loss if isinstance(reinforce_loss,int) else reinforce_loss.item():4f}'
               f' dynamic_backpropagation {dynamic_backpropagation if isinstance(dynamic_backpropagation,int) else dynamic_backpropagation.item():4f}'
               f' entropy_regularizer {entropy_regularizer if isinstance(entropy_regularizer,int) else entropy_regularizer.item():4f}')
-
+        """
+        
         self.optimizer.zero_grad()
         actor_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.parameters(), 100)

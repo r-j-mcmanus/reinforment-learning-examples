@@ -2,15 +2,10 @@ from typing import Any
 import torch
 
 
-class _UNMUTABLE:
-    def __setattr__(self, name: str, value: Any) -> None:
-        raise Exception(f'Cannot modify value of {name}')
-
-
 # 2010.02193 appendix D
-class Constants(_UNMUTABLE):
+class Constants():
 
-    class World(_UNMUTABLE):
+    class World():
         dataset_size = 2**20
         latent_dataset_size = 2**20
         batch_size = 2**7
@@ -18,13 +13,14 @@ class Constants(_UNMUTABLE):
         latent_state_dimension = 2**5 # the dimension of the latent space we map to with the stochastic world model
         hidden_state_dimension = 2**5 # the dimension of the hidden space we map to with the deterministic world model
         discrete_latent_classes = 2**5
-        epoch_count = 16 # 2**5 # 600
+        epoch_count = 2**5 # 600
         kl_loss_scale = 0.1
         kl_balancing = 0.8
         world_model_learning_rate = 2e-4
         beta_growth_rate = 50 # used in initial training of the world model
+        max_number_steps = 999
 
-    class Behaviors(_UNMUTABLE):
+    class Behaviors():
         trajectory_count = 2**10 # how many trajectories are followed when dreaming
         imagination_horizon = 2**4  # how many steps we go when dreaming
         discount_factor = 0.995
@@ -35,8 +31,9 @@ class Constants(_UNMUTABLE):
         critic_learning_rate = 1e-4
         slow_critic_update_interval = 100
         tau = 0.001 # used in the soft update
+        latent_epoch_count = 2 ** 5 # how many epochs we do when latent learning
 
-    class Common(_UNMUTABLE):
+    class Common():
         policy_steps_per_gradient_step = 2**2
         gradient_clipping = 100
         adam_eps = 1e-5 # for adam w optimisation (1711.05101)

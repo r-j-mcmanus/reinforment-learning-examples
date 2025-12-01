@@ -2,39 +2,37 @@ import torch
 from torch import Tensor
 
 from latent_memory import LatentMemory
+from episode_memory import EpisodeMemory
 from constants import *
 from critic import Critic
 from policy import Policy
 from rssm import RSSM
 
-def latent_learning(rssm: RSSM, latent_memory: LatentMemory, critic: Critic, actor: Policy):    
-    dreamt_s, dreamt_h = dream_sequence(rssm, actor, latent_memory)
+def latent_learning(rssm: RSSM, memory: EpisodeMemory, critic: Critic, actor: Policy, episode: int, epoch: int):    
+    """
+    Sample N latent trajectories, these will be in M different episodes. 
+    Pick the M sequences, find the values for h and q for all elements in that episode with the RSSM.
+    For the actual index in that episode we latently learn from, roll out the transitions for H steps
+    """
+    latent_starts, obs, actions = memory.sample_for_latent()
 
-    unflatten_shape = dreamt_s.shape[:-1]
+    z_latent_start, h_latent_start = rollout_transitions(rssm, latent_starts, obs, actions)
 
-    # dreamt_states is shape (,,state_dim) and we need it to be (,state_dim) for the networks
-    # so we flatten
-    dreamt_s_flatten = dreamt_s.view(-1, dreamt_s.size(-1))  # shape [batch*seq_len, state_dim]
-    dreamt_h_flatten = dreamt_h.view(-1, dreamt_h.size(-1))  # shape [batch*seq_len, state_dim]
+    dreamt_z, dreamt_h = dream_sequence(rssm, actor, z_latent_start, h_latent_start)
 
-    target_values = critic.target(dreamt_s_flatten)
-    rewards = rssm.reward(dreamt_h_flatten, dreamt_s_flatten)
-    rewards = rewards.view(*unflatten_shape, -1)
+    target_values = critic.target(dreamt_z)
+    rewards = rssm.reward(dreamt_h, dreamt_z)
     
-    # the target values 
-    target_values = target_values.view(*unflatten_shape, -1) 
-
     # we use the gradients of L_targets when finding the critic loss function
     L_targets = compute_lambda_targets(rewards, target_values)
 
     # find the predicted state value for the stabilising critic from the current state 
-    predicted_state_values = critic.predicted(dreamt_s_flatten.detach())
-    predicted_state_values = predicted_state_values.view(*unflatten_shape, -1) 
+    predicted_state_values = critic.predicted(dreamt_z.detach())
 
     # optimise the stabilising net based on the minibatch
-    actor_loss = actor.optimise(critic, L_targets, dreamt_s.detach()) 
-    critic_loss_scaler = critic.optimise(predicted_state_values, L_targets.detach())
-    print(f'critic_loss_scaler {critic_loss_scaler}')
+    actor_loss = actor.optimise(critic, L_targets, dreamt_z.detach()) 
+    critic_loss = critic.optimise(predicted_state_values, L_targets)
+    print(f'Episode {episode}, Epoch {epoch}, Critic loss {critic_loss}, Actor loss {actor_loss}')
 
     # soft update the target networks
     # larger UPDATE_DELAY reduces variance
@@ -44,29 +42,91 @@ def latent_learning(rssm: RSSM, latent_memory: LatentMemory, critic: Critic, act
     critic.soft_update()
 
 
-def compute_lambda_targets(rewards: Tensor, target_values: Tensor, gamma: float = 0.995):
+def rollout_transitions(rssm: RSSM, latent_starts: dict[int, list[int]], obs: Tensor, actions: Tensor)->tuple[Tensor, Tensor]:
     """
-    rewards: [T] tensor
-    target_values: [T] tensor
+    Get the start hidden and representation states for the dreaming sequences
+     
+    Returns
+    -------
+    tuple[Tensor, Tensor] - z_latent_start with shape (trajectory count, latent sate dimension) , h_latent_start with shape (trajectory count, hidden sate dimension)
     """
-    H = Constants.Behaviors.imagination_horizon
-    L = Constants.Behaviors.lambda_target_parameter
 
-    # TODO I need to make gamma from p(gamma | h, s)
+    # we want to simulate the episodes we sample from
+    episode_count = len(latent_starts)
+    hidden_state_size = Constants.World.hidden_state_dimension
 
-    V_targets = []
-    V_next = rewards[-1] + gamma * target_values[-1] # the last step isnt iterative
-    # V_targets.append(V_next) we dont use the final step in the summations eq.5 or eq.6 
+    sequence_len = obs.shape[1]
 
-    # go backwards as the early are defined in terms of the latter
-    for t in reversed(range(H)):
-        V_next = rewards[t] + gamma * ( (1 - L) * target_values[t] + L * V_next )
-        V_targets.append(V_next)
-    V_targets.reverse()
-    return torch.stack(V_targets)
+    # find the values for the hidden state and the posterior / representation model
+    h_0 = torch.zeros([episode_count, hidden_state_size], device=DEVICE) # dim to be fixed later
+    h = h_0 # relabeled for ease in for loop
+    hs = []
+    zs = []
+    for idx in range(sequence_len):
+        o = obs[:, idx, :]
+        a = actions[:, idx, :]
+        hs.append(h)
+        z = rssm.posterior(o, h)
+        zs.append(z.mean)
+        h = rssm.deterministic_step(z.mean, a, h)
+
+    # stack the states in the episodes we want to make dream sequences from
+    z_latent_start = []
+    h_latent_start = []
+    for ep_idx, ep_key in enumerate(latent_starts.keys()):
+        steps = latent_starts[ep_key]
+        for step in steps:
+            z_latent_start.append(zs[step-1][ep_idx, :])
+            h_latent_start.append(hs[step-1][ep_idx, :])
+
+    # shape (trajectory count, sate dimension) 
+    z_latent_start = torch.stack(z_latent_start)
+    h_latent_start = torch.stack(h_latent_start)
+
+    return z_latent_start, h_latent_start
 
 
-def dream_sequence(rssm: RSSM, actor: Policy, latent_memory: LatentMemory) -> tuple[torch.Tensor, torch.Tensor]:
+def compute_lambda_targets(rewards: Tensor, target_values: Tensor, 
+                           gamma: float = Constants.Behaviors.discount_factor,
+                           lam: float = Constants.Behaviors.lambda_target_parameter):
+    """
+    Compute lambda-returns G_t^lambda over an imagination horizon.
+
+    Args
+    ----
+    rewards: (T, B, 1)    - predicted rewards for imagined steps
+    target_values: (T, B) - predicted state-values for each imagined state (V_t)
+    gamma: discount factor
+    lam:   lambda parameter (0,1)
+
+    Returns
+    -------
+    lambda_returns: (T, B)
+    """
+    # sanity / shape handling
+    T, B = rewards.shape[0], rewards.shape[1]
+    # squeeze reward last dim -> (T, B)
+    rewards = rewards.squeeze(-1)
+    assert rewards.shape == (T, B)
+    assert target_values.shape == (T, B)
+
+    next_return: Tensor = target_values[-1]
+    lambda_returns = torch.empty_like(target_values)  # (T, B)
+
+    # backward recursion
+    for t in range(T - 1, -1, -1):
+        # tp1 = time plus 1
+        v_tp1 = target_values[t + 1] if t + 1 < T else next_return  # V_{t+1}; for t==T-1 we use v[-1] (bootstrap)
+        # V_t = r_t + gamma * ((1 - lam) * v_{t+1} + lam * V_{t+1})
+        lambda_ret_t = rewards[t] + gamma * ((1.0 - lam) * v_tp1 + lam * next_return)
+        lambda_returns[t] = lambda_ret_t
+        next_return = lambda_ret_t
+
+    return lambda_returns
+
+
+
+def dream_sequence(rssm: RSSM, actor: Policy, z_latent_start: Tensor, h_latent_start: Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     """Imagination MDP: 
     Sample from the states used during the rssm training for z_0 and h_0. 
     Returns a sequence of states z_{1:H} outputed by the transition predictor ~ p(z_t | z_{t-1}, a_{t-1})
@@ -76,27 +136,27 @@ def dream_sequence(rssm: RSSM, actor: Policy, latent_memory: LatentMemory) -> tu
     ---------
     rssm: RSSM
     actor: Policy
-    latent_memory: LatentMemory
+    z_latent_start: Tensor with shape (trajectory count, latent sate dimension)
+    h_latent_start: Tensor with shape (trajectory count, hidden sate dimension)
 
     Returns
     -------
-    torch.Tensor - shape = (horizon_length, batch_size, hidden_dimension + state_dimension)
+    tuple(Tensor, Tensor) - dreamt z and h, each with shape = (horizon_length, trajectory count, hidden sate dimension)
     """
-    # this comes directly from env interaction, and so isnt a 'dream'
-    s, h = latent_memory.sample() # initial states, shape - (trajectory_count, (hidden|stoch)_state_dim)
-
     dreamt_h = []
-    dreamt_s = []
+    dreamt_z = []
 
     # let the actor explore the latent space
+    z = z_latent_start
+    h = h_latent_start
     for _ in range(Constants.Behaviors.imagination_horizon):
-        action = actor.predict(s)
-        h = rssm.deterministic_step(s, action, h)
-        s = rssm.transition(h).sample
-        dreamt_s.append(s)
+        action = actor.predict(z)
+        h = rssm.deterministic_step(z, action, h)
+        z = rssm.transition(h).sample
+        dreamt_z.append(z)
         dreamt_h.append(h)
 
-    dreamt_s = torch.stack(dreamt_s)
+    dreamt_z = torch.stack(dreamt_z)
     dreamt_h = torch.stack(dreamt_h)
 
-    return dreamt_s, dreamt_h
+    return dreamt_z, dreamt_h

@@ -1,8 +1,10 @@
 import matplotlib.pyplot as plt
 import pandas as pd
+from datetime import datetime as dt
 
 from pathlib import Path
 
+_DATE = dt.now().strftime("%Y%m%d%H%M")
 
 _PATH = '9_Learning_latent_dynamics_for_planning_from_pixels'
 
@@ -13,7 +15,8 @@ def plot_rssm_data(df: pd.DataFrame, episode: int):
     print(f'finished plots {episode}')
 
 def _plot_rssm_losses(df: pd.DataFrame, episode: int):
-    fig_path = Path(f'{_PATH}/fig/rssm_loss/{episode}')
+
+    fig_path = Path(f'{_PATH}/fig/{_DATE}/rssm_loss/{episode}')
     fig_path.mkdir(parents=True, exist_ok=True)
     
     for col in df.columns:

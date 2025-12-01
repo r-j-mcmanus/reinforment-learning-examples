@@ -75,8 +75,8 @@ class StabilisingCriticNet(CriticBaseNet):
 
         Arguments
         ---------
-        predicted_state_action_values: Tensor: shape = (imagination_horizon, trajectory_count, 1), comes from this critic network
-        expected_state_action_values: Tensor: Shape = (imagination_horizon ,trajectory_count, 1), comes from the slowly updating target network
+        predicted_state_action_values: Tensor: shape = (imagination_horizon, trajectory_count), comes from this critic network
+        expected_state_action_values: Tensor: Shape = (imagination_horizon ,trajectory_count), comes from the slowly updating target network
 
         Notes
         -----
@@ -90,17 +90,12 @@ class StabilisingCriticNet(CriticBaseNet):
         """
         
         # see eq 5 in 2010.02193
-        # Element-wise loss: shape (H, B, 1)
+        # Element-wise loss: shape (B, 1)
         element_loss = nn.functional.smooth_l1_loss(
             predicted_state_action_values, expected_state_action_values, reduction='none'
         )
-
-        # Sum over imagination horizon (dim 0), and sum the last dim if present (e.g. 1)
-        # Result shape after sum: (B, 1) -> squeeze to (B,)
-        per_trajectory_loss  = element_loss.sum(dim=0).squeeze(-1)
-
-        # Mean across trajectories (batch)
-        loss = per_trajectory_loss.mean()
+        # Mean across trajectories, summed across horizon
+        loss = element_loss.mean()
 
         self.optimizer.zero_grad()
         loss.backward() 
