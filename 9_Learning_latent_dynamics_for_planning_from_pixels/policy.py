@@ -21,9 +21,9 @@ class Policy:
         self.stabilising_net = StabilisingPolicyNet(state_dimension, actions_dimension)
         self.target_net = TargetPolicyNet(state_dimension, actions_dimension)
 
-    def optimise(self, critic: Critic, L_targets: Tensor, dreamt_s: Tensor) -> float:
-        policy_loss = self.stabilising_net.optimise(critic, L_targets, dreamt_s)
-        return policy_loss
+    def optimise(self, critic: Critic, L_targets: Tensor, dreamt_s: Tensor) -> tuple[float, float, float, float]:
+        total_loss, reinforce_loss, dynamic_backprop_loss, entropy  = self.stabilising_net.optimise(critic, L_targets, dreamt_s)
+        return total_loss, reinforce_loss, dynamic_backprop_loss, entropy
 
     def soft_update(self):
         self.target_net.soft_update(self.stabilising_net)
@@ -117,7 +117,7 @@ class StabilisingPolicyNet(ContinuousPolicyNet):
 
         # by passing self.parameters, the optimiser knows which network is optimised
 
-    def optimise(self, critic: Critic, L_targets: Tensor, dreamt_s: Tensor) -> float:
+    def optimise(self, critic: Critic, L_targets: Tensor, dreamt_s: Tensor) -> tuple[float, float, float, float]:
         """Update actor policy using the sampled policy gradient
         
         See eq 6 in 2010.02193
@@ -146,13 +146,13 @@ class StabilisingPolicyNet(ContinuousPolicyNet):
             log_prob = predicted_action.sample_log_prob()
             reinforce_loss = rho * (log_prob * reinforce_weights).mean()
         else:
-            reinforce_loss = 0
+            reinforce_loss = torch.zeros([1])
 
         if rho != 1:
             # typically for continuous control
             dynamic_backpropagation = (1 - rho) * L_targets.mean()
         else:
-            dynamic_backpropagation = 0
+            dynamic_backpropagation = torch.zeros([1])
 
         # TODO when moving to non-diag covar matrix, will need changing to generic det, this is fine for now
         entropy_regularizer = eta * predicted_action.entropy().mean()
@@ -171,7 +171,7 @@ class StabilisingPolicyNet(ContinuousPolicyNet):
         torch.nn.utils.clip_grad_norm_(self.parameters(), 100)
         self.optimizer.step()
 
-        return actor_loss.item()
+        return actor_loss.item(), -reinforce_loss.item(), -dynamic_backpropagation.item(), -entropy_regularizer.item()
 
 
 class TargetPolicyNet(ContinuousPolicyNet):

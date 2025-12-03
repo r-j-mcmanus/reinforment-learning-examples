@@ -31,7 +31,7 @@ class Constants():
         critic_learning_rate = 1e-4
         slow_critic_update_interval = 100
         tau = 0.001 # used in the soft update
-        latent_epoch_count = 2 ** 5 # how many epochs we do when latent learning
+        latent_epoch_count = 3 # 2 ** 5 # how many epochs we do when latent learning
 
     class Common():
         policy_steps_per_gradient_step = 2**2

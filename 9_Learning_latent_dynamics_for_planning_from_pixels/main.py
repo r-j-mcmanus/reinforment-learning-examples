@@ -1,4 +1,7 @@
+import random
 
+import numpy as np
+import pandas as pd
 import gymnasium as gym
 from gymnasium.wrappers import RecordVideo
 from gymnasium import Env
@@ -14,9 +17,15 @@ from critic import Critic
 from policy import Policy
 
 def main():
+    set_global_seed()
+
+    # dataframes for tracking training data
+    df_rssm = pd.DataFrame()
+    df_ll = pd.DataFrame()
+
     # Create the environment
     env = gym.make('Ant-v5', render_mode = 'rgb_array')
-    #env = RecordVideo(env, video_folder="9_Learning_latent_dynamics_for_planning_from_pixels/videos/", 
+    # env = RecordVideo(env, video_folder="9_Learning_latent_dynamics_for_planning_from_pixels/videos/", 
     #                    name_prefix="ant_run", episode_trigger=lambda x: True)
 
     obs_size: int = env.observation_space.shape[0] # type: ignore
@@ -33,7 +42,7 @@ def main():
 
     # Instantiate the RSSM model for planning
     rssm = RSSM(obs_size, action_size)
-    rssm, df_rssm = train_rssm(rssm, memory, episode = -1, beta_growth=True) # initial training on warm up data
+    rssm, df_rssm = train_rssm(rssm, memory, episode=-1, df=df_rssm, beta_growth=True) # initial training on warm up data
 
     critic = Critic()
     actor = Policy(action_size)
@@ -43,13 +52,12 @@ def main():
         walk_env(env, memory, rssm, actor, episode)
 
         if (episode % record_ep_step == 0) :
-
             print(f'Training RSSM on episode {episode}')
             rssm, df_rssm = train_rssm(rssm, memory, episode, df_rssm)
             
             print(f'Training Actor Critic on episode {episode}')
-            for epoch in range(Constants.Behaviors.latent_epoch_count):
-                latent_learning(rssm, memory, critic, actor, episode, epoch)
+            df_ll = latent_learning(rssm, memory, critic, actor, episode, df_ll)
+                
 
     # Close the environment
     env.close()
@@ -145,6 +153,27 @@ def warm_up_memory(env, memory: EpisodeMemory) -> EpisodeMemory:
             memory.end_episode()
         return memory
 
+
+def set_global_seed(seed: int = 42):
+    # Python
+    random.seed(seed)
+
+    # NumPy
+    np.random.seed(seed)
+
+    # PyTorch (CPU)
+    torch.manual_seed(seed)
+
+    # PyTorch (CUDA)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+    # CuDNN deterministic behavior (optional)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    print(f"[Seed set to {seed}]")
 
 if __name__ == "__main__":
     main()

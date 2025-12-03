@@ -15,7 +15,7 @@ from plots import plot_rssm_data
 from constants import *
 
 
-def train_rssm(rssm: RSSM, episode_memory: EpisodeMemory, episode: int, df: pd.DataFrame | None = None, beta_growth: bool = False) -> tuple[RSSM, pd.DataFrame]:
+def train_rssm(rssm: RSSM, episode_memory: EpisodeMemory, episode: int, df: pd.DataFrame, beta_growth: bool = False) -> tuple[RSSM, pd.DataFrame]:
     """Trains an RSSM on sequences of observations and actions.
     
     Arguments:
@@ -33,13 +33,9 @@ def train_rssm(rssm: RSSM, episode_memory: EpisodeMemory, episode: int, df: pd.D
     beta_growth_rate = Constants.World.beta_growth_rate
     hidden_state_dimension = Constants.World.hidden_state_dimension
 
-    if df is None:
-        # to track loss
-        df = pd.DataFrame()
-    assert isinstance(df, pd.DataFrame)
-
     for epoch in range(epoch_count):  # number of epochs
-        loss = 0
+        loss = torch.zeros([1])
+        # prevents early collapse of latent space
         beta_norm = min(1.0, (epoch+1) / epoch_count) if beta_growth else 1 
         beta = 0.1 * beta_norm
         sequence_transitions = episode_memory.sample()
@@ -51,6 +47,11 @@ def train_rssm(rssm: RSSM, episode_memory: EpisodeMemory, episode: int, df: pd.D
         row = {}
         row['epoch'] = epoch
         row['episode'] = episode
+        row['beta'] = beta
+
+        kl_loss_total = 0
+        reconstruction_loss_total = 0
+        reward_loss_total = 0
 
         for t in range(0, sequence_length):
             # transition shape (batch_size, obs/action/reward dim)
@@ -60,32 +61,26 @@ def train_rssm(rssm: RSSM, episode_memory: EpisodeMemory, episode: int, df: pd.D
             next_actions = sequence_transitions.action[:, t:t+horizon_length].detach() # used in rollout
 
             # print('obs.shape', obs.shape)
-
+            # s_{t|t} - state at time t conditioned on observations up to time t
             posterior_state = rssm.posterior(obs, h_t) # predict what the state should be given the observation and the hidden state
-            transition_state: State = rssm.transition(h_t) # predict what the state should be given the hidden state
 
-            # getting the diagonal lines in fig 3 c of 1811.04551, does not take the left most node
-            s_it = rssm.rollout(posterior_state, h_t, next_actions)
-            # this finds s_{i|j} where:
-            #  i in [sequence_start, sequence_length]
-            #  j = sequence_start is the last observation the state is conditioned on
-            past_rollouts.append(s_it)
-
-            # TODO maybe try re-doing this to make it clearer?
-            kl_loss = 0
-            kl_n = 0
-            # prevents early collapse of latent space
-            for i, state_rollout in enumerate(past_rollouts):
+            kl_loss = torch.zeros([1])
+            # find kl for same step but less obs conditioned on
+            for j in range(len(past_rollouts)):
+                rollout = past_rollouts[j]
+                latent_step = len(past_rollouts) - 1 - j
+                if latent_step >= len(rollout):
+                    # at the end of a sequence we can roll out no more as there are no actions or obs to condition with
+                    continue
+                rolled_out_state = rollout[latent_step]
                 # take the ith so we test against the ith step of the rollout
-                if i < len(state_rollout): # the end of the sequence will not have the full horizon
-                    kl_latent = rssm.divergence_from_states(transition_state, state_rollout[i]) # KL divergence
-                    row[f'kl_({t},{i})'] = float(kl_latent.item())
-                    kl_loss += kl_latent
-                    kl_n += 1
+                kl_latent = rssm.divergence_from_states(posterior_state, rolled_out_state) # KL divergence
+                row[f'kl_({t},{t-len(past_rollouts)+j})'] = float(kl_latent.item())
+                kl_loss += kl_latent
 
             assert isinstance(kl_loss, torch.Tensor)
-            row['kl_loss'] = float(kl_loss.item())
-            kl_loss = beta * kl_loss / kl_n
+            #row[f'kl_loss_{t}'] = float(kl_loss.item())
+            kl_loss = beta * kl_loss / Constants.Behaviors.imagination_horizon
 
             # Reconstruction loss, predicting next_obs from latent state
             reconstruction_loss = rssm.observation_reconstruction_error(posterior_state, obs, h_t)
@@ -95,12 +90,25 @@ def train_rssm(rssm: RSSM, episode_memory: EpisodeMemory, episode: int, df: pd.D
 
             loss += reconstruction_loss + reward_loss + kl_loss
             
-            # h for the next loop
-            h_t = rssm.deterministic_step(posterior_state.mean, action, h_t)
+            # getting the diagonal lines in fig 3 c of 1811.04551, does not take the left most node
+            # s_{i|t} - state at time i conditioned on observations up to time t where j in [t+1, ..., t+horizon length]
+            s_it = rssm.transition_rollout(posterior_state, h_t, next_actions)
+            past_rollouts.append(s_it)
 
-            row['reconstruction_loss'] = float(reconstruction_loss.item())
-            row['reward_loss'] = float(reward_loss.item())
-            row['beta'] = beta
+            # h for the next loop
+            h_t = rssm.deterministic_step(posterior_state.sample, action, h_t)
+
+            #row[f'reconstruction_loss_{t}'] = float(reconstruction_loss.item())
+            #row[f'reward_loss_{t}'] = float(reward_loss.item())
+
+            kl_loss_total += kl_loss.item()
+            reconstruction_loss_total += reconstruction_loss.item()
+            reward_loss_total += reward_loss.item()
+        
+        row[f'total_kl_loss'] = kl_loss_total
+        row[f'total_reconstruction_loss'] = reconstruction_loss_total
+        row[f'total_reward_loss'] = reward_loss_total
+        row[f'total_loss'] = loss.item()
 
         assert isinstance(loss, torch.Tensor)
         # Back-propagation
@@ -117,6 +125,6 @@ def train_rssm(rssm: RSSM, episode_memory: EpisodeMemory, episode: int, df: pd.D
         print(f"Episode {episode}, Epoch {epoch}, Total Loss: {loss.item():.4f}")
 
     #df.to_csv('rssm_losses.csv')
-    #plot_rssm_data(df, episode)
+    plot_rssm_data(df, episode)
 
     return rssm, df
