@@ -66,7 +66,7 @@ class RSSM(nn.Module):
         #       h = (1 - z) * h_candidate + z * h  -- mix old with new directly
         # we use a single layer determanistic model and allow for complications in the state model.
         # TODO test more layers?
-        self._rnn = nn.GRU(state_size + action_size, 
+        self._gru = nn.GRU(state_size + action_size, 
                            hidden_state_dimension, 
                            device=DEVICE) 
         
@@ -80,6 +80,7 @@ class RSSM(nn.Module):
         decoder_input_size = hidden_state_dimension + state_size
         self.observation = Decoder(decoder_input_size, self.obs_size)
         self.reward = Decoder(decoder_input_size, 1)
+        self.discount = Decoder(decoder_input_size, 1)
 
         self.optimizer = optim.AdamW(self.parameters(), lr=1e-3)
 
@@ -142,7 +143,7 @@ class RSSM(nn.Module):
         for d in range(1, d_max + 1):
             for t in range(d, len(posteriors)):
                 # Given the inital deterministic hidden state h_t, the prior at time t and the d actions subsequent actions,
-                # predict the priot at time t+d
+                # predict the prior at time t+d
                 pred_prior = self.rollout_prior(priors[t], actions[t:t+d], hs[t])
 
                 # Compute KL divergence between posterior and computed prior
@@ -173,12 +174,12 @@ class RSSM(nn.Module):
             Tensor: next deterministic hidden state (batch_size, rnn_hidden_size).
         """
         inputs = torch.cat([prev_state, prev_action], dim=-1)  # (batch_size, state_size + action_size)
-        _, h = self._rnn(inputs.unsqueeze(dim=0), h.unsqueeze(dim=0)) 
+        _, h = self._gru(inputs.unsqueeze(dim=0), h.unsqueeze(dim=0)) 
         return h.squeeze(0)
 
-    def posterior(self, obs: Tensor, h: Tensor) -> State:
+    def representation(self, obs: Tensor, h: Tensor) -> State:
         """
-        Computes the approximate posterior distribution over the current latent state given the previous 
+        Representation model that computes the approximate posterior distribution over the current latent state given the previous 
         state, action, and current observation.
 
         x_t: current observation

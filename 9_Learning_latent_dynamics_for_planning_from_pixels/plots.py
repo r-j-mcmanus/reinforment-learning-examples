@@ -20,6 +20,12 @@ def plot_ll_data(df: pd.DataFrame, episode: int):
         _plot_df(df, episode, 'actor_critic_loss')
     print(f'finished plots {episode}')
 
+def plot_env_data(df: pd.DataFrame, episode: int):
+    print(f'making plots {episode}')
+    with plt.ioff():
+        _plot_df(df, episode, 'env')
+    print(f'finished plots {episode}')
+
 def _plot_df(df: pd.DataFrame, episode: int, folder_name: str):
 
     fig_path = Path(f'{_PATH}/fig/{_DATE}/{folder_name}/{episode}')

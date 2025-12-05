@@ -30,9 +30,9 @@ class Posterior(nn.Module):
             posterior_stddev (nn.Linear): Layer to compute the stddev of the posterior distribution.
         """
         super().__init__()
-        stich_state_dim = Constants.World.latent_state_dimension
+        stoch_state_dim = Constants.World.latent_state_dimension
         hidden_state_dimension = Constants.World.hidden_state_dimension
-        input_size = 2 * stich_state_dim + hidden_state_dimension + obs_size # takes both mean and std of the stochastic state
+        input_size = 2 * stoch_state_dim + hidden_state_dimension + obs_size # takes both mean and std of the stochastic state
         self.mean_only = mean_only
         self.min_stddev = min_stddev
         self.activation = activation
@@ -41,8 +41,8 @@ class Posterior(nn.Module):
 
         # Posterior network
         self.posterior_fc1 = nn.Linear(input_size, hidden_size)
-        self.posterior_mean = nn.Linear(hidden_size, stich_state_dim)
-        self.posterior_stddev = nn.Linear(hidden_size, stich_state_dim)
+        self.posterior_mean = nn.Linear(hidden_size, stoch_state_dim)
+        self.posterior_stddev = nn.Linear(hidden_size, stoch_state_dim)
 
         self._init_weights()
 

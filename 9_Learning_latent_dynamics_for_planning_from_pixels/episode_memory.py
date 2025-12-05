@@ -28,8 +28,10 @@ class EpisodeMemory:
     Stores entire episodes instead of individual transitions.
     Each item is a Sequence(transitions=[Transition, ...]).
     """
+    def __repr__(self):
+        return len(self)
 
-    def __init__(self, capacity_episodes: int = 1000, seq_len: int = Constants.World.sequence_length):
+    def __init__(self, capacity_episodes: int = Constants.World.capacity_episodes, seq_len: int = Constants.World.sequence_length):
         """
         Capacity counts NUMBER OF EPISODES, not transitions.
         """
@@ -48,6 +50,9 @@ class EpisodeMemory:
         """Add a single transition to the current in-progress episode."""
         self._current_episode.add(*args)
 
+    def discard_episode(self):
+        self._current_episode = Episode()
+
     def end_episode(self):
         """Finish current episode, push it into memory."""
         ep = self._current_episode
@@ -56,7 +61,7 @@ class EpisodeMemory:
         if L > 0:
             # append newly completed episode
             self._episodes.append(ep)
-            self._episode_lengths.append(L - self.seq_len + 1)
+            self._episode_lengths.append(L + 1)
 
             # enforce alignment with the deque's maxlen (in case of overflow)
             if len(self._episodes) != len(self._episode_lengths):
@@ -103,9 +108,11 @@ class EpisodeMemory:
         """Sample one fixed-length subsequence from an episode."""
         assert len(self._episodes) > 0, "Replay buffer is empty."
 
-        # 1. sample an episode proportionally to (length - seq_len + 1)
+        # 1. sample an episode proportionally to (length + 1)
         r = random.randint(1, self._total)
         idx = bisect.bisect_left(self._cumulative, r)
+        if idx >  len(self._episodes) - 10:
+            a=1
         ep = self._episodes[idx]
         max_start = max(len(ep) - self.seq_len, 0)
 
@@ -163,7 +170,6 @@ class EpisodeMemory:
                 )
             )
         return latent_starts, torch.stack(obs), torch.stack(actions)
-
 
     def __len__(self):
         """Total number of transitions across stored episodes."""

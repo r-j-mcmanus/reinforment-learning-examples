@@ -15,14 +15,13 @@ from plots import plot_rssm_data
 from constants import *
 
 
-def train_rssm(rssm: RSSM, episode_memory: EpisodeMemory, episode: int, df: pd.DataFrame, beta_growth: bool = False) -> tuple[RSSM, pd.DataFrame]:
+def train_rssm(rssm: RSSM, episode_memory: EpisodeMemory, episode: int, df: pd.DataFrame) -> tuple[RSSM, pd.DataFrame]:
     """Trains an RSSM on sequences of observations and actions.
     
     Arguments:
     rssm: RSSM
     replay_memory: ReplayMemory
     episode: int - for logging
-    beta_growth: bool - should beta grow from 0 to 1, set to True for initial training
     """
     # Instantiate model
 
@@ -33,12 +32,13 @@ def train_rssm(rssm: RSSM, episode_memory: EpisodeMemory, episode: int, df: pd.D
     beta_growth_rate = Constants.World.beta_growth_rate
     hidden_state_dimension = Constants.World.hidden_state_dimension
 
-    for epoch in range(epoch_count):  # number of epochs
+    for epoch in range(epoch_count):
+        # each epoch picks a collection of sequences we Back-propagate the loss from
+        # we do this for multiple epochs
         loss = torch.zeros([1])
-        # prevents early collapse of latent space
-        beta_norm = min(1.0, (epoch+1) / epoch_count) if beta_growth else 1 
-        beta = 0.1 * beta_norm
-        sequence_transitions = episode_memory.sample()
+        # beta varying prevents early collapse of latent space
+        beta = 0.01 * min(1.0, len(df) / Constants.World.beta_growth_rate) 
+        episode_transitions = episode_memory.sample()
         h_1 = torch.zeros(batch_size, hidden_state_dimension, device=DEVICE)
         h_t = h_1 # relabeled for ease in for loop
 
@@ -55,17 +55,18 @@ def train_rssm(rssm: RSSM, episode_memory: EpisodeMemory, episode: int, df: pd.D
 
         for t in range(0, sequence_length):
             # transition shape (batch_size, obs/action/reward dim)
-            obs = sequence_transitions.state[:,t].detach() # used in reconstruction and posterior
-            action = sequence_transitions.action[:,t].detach() # use to find the next deterministic step
-            reward = sequence_transitions.reward[:,t].detach() # used in reward reconstruction loss
-            next_actions = sequence_transitions.action[:, t:t+horizon_length].detach() # used in rollout
+            obs = episode_transitions.state[:,t].detach() # used in reconstruction and posterior
+            action = episode_transitions.action[:,t].detach() # use to find the next deterministic step
+            reward = episode_transitions.reward[:,t].detach() # used in reward reconstruction loss
+            next_actions = episode_transitions.action[:, t:t+horizon_length].detach() # used in rollout
 
             # print('obs.shape', obs.shape)
             # s_{t|t} - state at time t conditioned on observations up to time t
-            posterior_state = rssm.posterior(obs, h_t) # predict what the state should be given the observation and the hidden state
+            posterior_state = rssm.representation(obs, h_t) # predict what the state should be given the observation and the hidden state
 
             kl_loss = torch.zeros([1])
-            # find kl for same step but less obs conditioned on
+            # Latent overshooting:
+            # find kl for same step but where the obs conditioned on ends at different times
             for j in range(len(past_rollouts)):
                 rollout = past_rollouts[j]
                 latent_step = len(past_rollouts) - 1 - j
@@ -75,10 +76,9 @@ def train_rssm(rssm: RSSM, episode_memory: EpisodeMemory, episode: int, df: pd.D
                 rolled_out_state = rollout[latent_step]
                 # take the ith so we test against the ith step of the rollout
                 kl_latent = rssm.divergence_from_states(posterior_state, rolled_out_state) # KL divergence
-                row[f'kl_({t},{t-len(past_rollouts)+j})'] = float(kl_latent.item())
+                #row[f'kl_({t},{t-len(past_rollouts)+j})'] = float(kl_latent.item())
                 kl_loss += kl_latent
 
-            assert isinstance(kl_loss, torch.Tensor)
             #row[f'kl_loss_{t}'] = float(kl_loss.item())
             kl_loss = beta * kl_loss / Constants.Behaviors.imagination_horizon
 
@@ -110,7 +110,6 @@ def train_rssm(rssm: RSSM, episode_memory: EpisodeMemory, episode: int, df: pd.D
         row[f'total_reward_loss'] = reward_loss_total
         row[f'total_loss'] = loss.item()
 
-        assert isinstance(loss, torch.Tensor)
         # Back-propagation
         rssm.optimizer.zero_grad()
         loss.backward()
@@ -120,11 +119,9 @@ def train_rssm(rssm: RSSM, episode_memory: EpisodeMemory, episode: int, df: pd.D
         
         _df = pd.DataFrame([row])
         df = pd.concat([df, _df], ignore_index=True)
-
-        #print(_df) 
         print(f"Episode {episode}, Epoch {epoch}, Total Loss: {loss.item():.4f}")
 
     #df.to_csv('rssm_losses.csv')
-    plot_rssm_data(df, episode)
+    plot_rssm_data(df, 0)
 
     return rssm, df

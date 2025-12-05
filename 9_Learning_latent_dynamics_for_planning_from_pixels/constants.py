@@ -13,12 +13,13 @@ class Constants():
         latent_state_dimension = 2**5 # the dimension of the latent space we map to with the stochastic world model
         hidden_state_dimension = 2**5 # the dimension of the hidden space we map to with the deterministic world model
         discrete_latent_classes = 2**5
-        epoch_count = 2**5 # 600
+        epoch_count = 2 # 16 # 2**5 # 600
         kl_loss_scale = 0.1
         kl_balancing = 0.8
         world_model_learning_rate = 2e-4
-        beta_growth_rate = 50 # used in initial training of the world model
-        max_number_steps = 999
+        beta_growth_rate = 100 # used in initial training of the world model
+        max_number_steps = 30 # how many env steps we can take
+        capacity_episodes = 1000
 
     class Behaviors():
         trajectory_count = 2**10 # how many trajectories are followed when dreaming
@@ -31,9 +32,10 @@ class Constants():
         critic_learning_rate = 1e-4
         slow_critic_update_interval = 100
         tau = 0.001 # used in the soft update
-        latent_epoch_count = 3 # 2 ** 5 # how many epochs we do when latent learning
+        latent_epoch_count = 16 # 2 ** 5 # how many epochs we do when latent learning
 
     class Common():
+        num_episodes = 1000
         policy_steps_per_gradient_step = 2**2
         gradient_clipping = 100
         adam_eps = 1e-5 # for adam w optimisation (1711.05101)

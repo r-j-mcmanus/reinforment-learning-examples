@@ -3,9 +3,12 @@
         "diag"
     ],
     "cSpell.words": [
+        "ddpg",
         "isnt",
         "minibatch",
         "outputed",
+        "prob",
+        "reparam",
         "rsample",
         "RSSM",
         "softplus",

@@ -25,15 +25,17 @@ def latent_learning(rssm: RSSM, memory: EpisodeMemory, critic: Critic, actor: Po
             z_latent_start, h_latent_start = rollout_transitions(rssm, latent_starts, obs, actions)
         dreamt_z, dreamt_h = dream_sequence(rssm, actor, z_latent_start, h_latent_start)
         with torch.no_grad():
-            rewards = rssm.reward(dreamt_h, dreamt_z)
+            rewards: Tensor = rssm.reward(dreamt_h, dreamt_z)
         
+        dreamt_z, dreamt_h, rewards = dreamt_z.detach(), dreamt_h.detach(), rewards.detach()
+
         target_values = critic.target(dreamt_z)
 
         # we use the gradients of L_targets when finding the critic loss function
         L_targets = compute_lambda_targets(rewards, target_values)
 
         # find the predicted state value for the stabilising critic from the current state 
-        predicted_state_values = critic.predicted(dreamt_z.detach())
+        predicted_state_values = critic.predicted(dreamt_z)
 
         # optimise the stabilising net based on the minibatch
         actor_total_loss, reinforce_loss, dynamic_backprop_loss, entropy = actor.optimise(critic, L_targets, dreamt_z.detach()) 
@@ -57,7 +59,7 @@ def latent_learning(rssm: RSSM, memory: EpisodeMemory, critic: Critic, actor: Po
         row['critic_loss'] = critic_loss
         _df = pd.DataFrame([row])
         df = pd.concat([df, _df], ignore_index=True)
-    plot_ll_data(df, episode)
+    plot_ll_data(df, 0)
     return df
 
 def rollout_transitions(rssm: RSSM, latent_starts: dict[int, list[int]], obs: Tensor, actions: Tensor)->tuple[Tensor, Tensor]:
@@ -84,7 +86,7 @@ def rollout_transitions(rssm: RSSM, latent_starts: dict[int, list[int]], obs: Te
         o = obs[:, idx, :]
         a = actions[:, idx, :]
         hs.append(h)
-        z = rssm.posterior(o, h)
+        z = rssm.representation(o, h)
         zs.append(z.mean)
         h = rssm.deterministic_step(z.mean, a, h)
 
