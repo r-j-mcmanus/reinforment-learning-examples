@@ -97,7 +97,6 @@ class RSSM(nn.Module):
         # all these networks are jointly optimised
         self.optimizer = optim.AdamW(self.parameters(), lr=1e-3)
 
-
     def transition_rollout(self, initial_state: State, initial_hidden_state: Tensor, action: Tensor) -> list[State]:
         """predicts the next state from both the deterministic and stochastic representation spate model
         given the initial observation and actions up to the learning horizon_length. 

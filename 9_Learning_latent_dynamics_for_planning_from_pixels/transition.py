@@ -30,7 +30,8 @@ class Transition(nn.Module):
         """
         super().__init__()
         self.mean_only = mean_only
-        self.min_stddev = Constants.Common.min_stddev
+        self.LOG_STD_MIN = -26
+        self.LOG_STD_MAX = 2
         self.activation = activation
 
         state_size = Constants.World.latent_state_dimension
@@ -40,7 +41,7 @@ class Transition(nn.Module):
         self.transition_fc1 = nn.Linear(input_size, hidden_size)
         self.transition_fc2 = nn.Linear(hidden_size, hidden_size)
         self.transition_mean = nn.Linear(hidden_size, state_size)
-        self.transition_stddev = nn.Linear(hidden_size, state_size)
+        self.transition_log_std = nn.Linear(hidden_size, state_size)
 
         self._init_weights()
 
@@ -61,10 +62,11 @@ class Transition(nn.Module):
         
         p(z_t| h_t) ~ N(mean(theta_1), stddev(theta_2))
         """
-        hidden = self.activation(self.transition_fc1(input))
-        hidden = self.activation(self.transition_fc2(hidden))
-        mean: Tensor = self.transition_mean(hidden)
-        stddev: Tensor = F.softplus(self.transition_stddev(hidden)) + self.min_stddev
-        sample: Tensor = mean if self.mean_only else MultivariateNormal(mean, torch.diag_embed(stddev)).rsample()
+        x = self.activation(self.transition_fc1(input))
+        x = self.activation(self.transition_fc2(x))
+        mean: Tensor = self.transition_mean(x)
+        log_std: Tensor = self.transition_log_std(x).clamp(self.LOG_STD_MIN, self.LOG_STD_MAX)
+        stddev = log_std.exp()
+        sample: Tensor = mean if self.mean_only else torch.distributions.Normal(mean, stddev).rsample()
         return State(mean, stddev, sample)
     

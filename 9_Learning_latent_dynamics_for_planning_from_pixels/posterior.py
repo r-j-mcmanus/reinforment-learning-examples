@@ -51,6 +51,8 @@ class Posterior(nn.Module):
         input_size = hidden_state_dimension + obs_size
         self.mean_only = mean_only
         self.min_stddev = min_stddev
+        self.LOG_STD_MIN = -5
+        self.LOG_STD_MAX = 2
         self.activation = activation
 
         hidden_size = Constants.Common.MLP_width
@@ -59,7 +61,7 @@ class Posterior(nn.Module):
         self.posterior_fc1 = nn.Linear(input_size, hidden_size)
         self.posterior_fc2 = nn.Linear(hidden_size, hidden_size)
         self.posterior_mean = nn.Linear(hidden_size, stoch_state_dim)
-        self.posterior_stddev = nn.Linear(hidden_size, stoch_state_dim)
+        self.posterior_log_std = nn.Linear(hidden_size, stoch_state_dim)
 
         self._init_weights()
 
@@ -86,12 +88,13 @@ class Posterior(nn.Module):
         
         p(z_t| h_t, x_t) = p(x_t | z_t, h_t) p(z_t| h_t) / p(x_t) ~ N(mean(phi_1), stddev(phi_2))
 
-        Approximate the Basian posterior using a NN that takes the the prior and current observation.
+        Approximate the Bayesian posterior using a NN that takes the the hidden state and current observation.
         """
-        hidden = self.activation(self.posterior_fc1(torch.concat([obs, h], dim=-1)))
-        hidden = self.activation(self.posterior_fc2(hidden))
-        mean = self.posterior_mean(hidden)
-        stddev = F.softplus(self.posterior_stddev(hidden)) + self.min_stddev
-        sample = mean if self.mean_only else MultivariateNormal(mean, torch.diag_embed(stddev)).rsample()
+        x = self.activation(self.posterior_fc1(torch.concat([obs, h], dim=-1)))
+        x = self.activation(self.posterior_fc2(x))
+        mean = self.posterior_mean(x)
+        log_std: Tensor = self.posterior_log_std(x).clamp(self.LOG_STD_MIN, self.LOG_STD_MAX)
+        stddev = log_std.exp()
+        sample = mean if self.mean_only else torch.distributions.Normal(mean, stddev).rsample()
         return State(mean, stddev, sample)
     
