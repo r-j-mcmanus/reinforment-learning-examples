@@ -14,12 +14,10 @@ from rssm import RSSM
 from rssm_training import train_rssm
 from constants import *
 from episode_memory import EpisodeMemory
-from ddgp_training import latent_learning_2
-from critic import Critic
-from policy import Policy
+from ddgp_training import train_ddpg
 from ddgp import DDPG
 
-from plots import plot_env_data
+from plots import plot_env_data, plot_rssm_data, plot_ll_data
 
 def main():
     set_global_seed()
@@ -56,12 +54,9 @@ def main():
 
     # Instantiate the RSSM model for planning
     rssm = RSSM(obs_size, action_size)
-    rssm, df_rssm = train_rssm(rssm, memory, episode=0, df=df_rssm) # initial training on warm up data
+    rssm, df_rssm = train_rssm(rssm, memory, episode=0, epoch=0, df=df_rssm) # initial training on warm up data
 
     ddpg = DDPG(action_size, 1)
-
-    # critic = Critic()
-    # actor = Policy(action_size)
 
     for episode in range(1, num_episodes+1):
 
@@ -69,17 +64,18 @@ def main():
 
         if True: # (episode % record_ep_step == 0) :
             plot_env_data(df_env, 0)
-
-            print(f'Training RSSM on episode {episode}')
-            rssm, df_rssm = train_rssm(rssm, memory, episode, df_rssm)
-            
-            # no point training actor until we start caring about the kl divergence
-            if True: #len(df_rssm) > Constants.World.beta_growth_rate:
-                print(f'Training Actor Critic on episode {episode}')
-                df_ll = latent_learning_2(rssm, memory, ddpg, episode, df_ll)
-
-                #df_ll = latent_learning(rssm, memory, critic, actor, episode, df_ll)
+            for epoch in range(Constants.World.epoch_count):
+                print(f'Training RSSM on episode {episode}')
+                rssm, df_rssm = train_rssm(rssm, memory, episode, epoch, df_rssm)
                 
+                # no point training actor until we start caring about the kl divergence
+                if len(df_rssm) > 150:
+                    print(f'Training Actor Critic on episode {episode}')
+                    df_ll = train_ddpg(rssm, memory, ddpg, episode, epoch, df_ll)
+            plot_rssm_data(df_rssm, 0)
+            plot_ll_data(df_ll, 0)
+
+
     # Close the environment
     env.close()
 

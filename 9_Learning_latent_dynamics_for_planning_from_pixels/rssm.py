@@ -65,23 +65,36 @@ class RSSM(nn.Module):
         #       h_candidate = torch.tanh(W_xh(x) + U_hh(r * h))
         #       h = (1 - z) * h_candidate + z * h  -- mix old with new directly
         # we use a single layer determanistic model and allow for complications in the state model.
-        # TODO test more layers?
+        # This is what fundamentally drives the prediction of the next state given then current state and action
         self._gru = nn.GRU(state_size + action_size, 
                            hidden_state_dimension, 
-                           device=DEVICE) 
-        
+                           device=DEVICE)
+        # see 1511.06464 and 1312.6120, basically repeated use causes eigenvalues to explode if not unitary
+        for name, param in self._gru .named_parameters():
+            if "weight" in name:
+                nn.init.orthogonal_(param)
+            elif "bias" in name:
+                nn.init.zeros_(param)
+
         # Transition network
+        # given the hidden state, what would the latent state be
         self.transition = Transition()
 
         # Posterior network
-        self.posterior_model = Posterior(self.obs_size)
+        # given the hidden state and the observation, what would the latent state be
+        self.representation = Posterior(self.obs_size)
 
-        # State Decoder
+        # back to "RL components" networks
         decoder_input_size = hidden_state_dimension + state_size
-        self.observation = Decoder(decoder_input_size, self.obs_size)
+        # predicts the observation given the hidden state and the latent state
+        # basically the decoder to the representation models encoder when considered as a VAE
+        self.observation = Decoder(decoder_input_size, self.obs_size) 
+        # predicts the reward given the hidden state and the latent state
         self.reward = Decoder(decoder_input_size, 1)
+        # predicts the discount given the hidden state and the latent state
         self.discount = Decoder(decoder_input_size, 1)
 
+        # all these networks are jointly optimised
         self.optimizer = optim.AdamW(self.parameters(), lr=1e-3)
 
 
@@ -115,17 +128,17 @@ class RSSM(nn.Module):
         return MultivariateNormal(state.mean, torch.diag_embed(stddev))
 
     def divergence_from_states(self, post: State, prior: State) -> Tensor:
-        """Given two states, finds the associated distribtions and returns the KL divergence. 
-        Uses KL balancing as learning the transition function is difficult and we want to 
-        avoid regularizing the representations toward a poorly trained prior"""
+        """Given two states, finds the associated distributions and returns the KL divergence. 
+        Uses KL balancing as learning the transition function is difficult, so we want to encourage the prior changing 
+        towards the posterior more than the posterior changing to the prior"""
         post_dist = self.distribution_from_state(post)
         sg_post_dist = self.distribution_from_state(post.detach())
         prior_dist = self.distribution_from_state(prior)
         sg_prior_dist = self.distribution_from_state(prior.detach())
-        a = Constants.World.kl_balancing
+        balance = Constants.World.kl_balancing
         kl_loss = (
-            torch.distributions.kl_divergence(sg_post_dist, prior_dist).mean() * a +
-            torch.distributions.kl_divergence(post_dist, sg_prior_dist).mean() * (1-a)
+            torch.distributions.kl_divergence(sg_post_dist, prior_dist).mean() * balance +
+            torch.distributions.kl_divergence(post_dist, sg_prior_dist).mean() * (1-balance)
         )
         return kl_loss
 
@@ -176,42 +189,15 @@ class RSSM(nn.Module):
         inputs = torch.cat([prev_state, prev_action], dim=-1)  # (batch_size, state_size + action_size)
         _, h = self._gru(inputs.unsqueeze(dim=0), h.unsqueeze(dim=0)) 
         return h.squeeze(0)
-
-    def representation(self, obs: Tensor, h: Tensor) -> State:
-        """
-        Representation model that computes the approximate posterior distribution over the current latent state given the previous 
-        state, action, and current observation.
-
-        x_t: current observation
-        h_t: RNN hidden activation vectors
-        z_t: current latent state
-
-        phi_1 = NN parameters for mean of p(alpha|x)
-        phi_2 = NN parameters for stddev of p(alpha|x)
-        
-        p(z_t| h_t, x_t) = p(x_t | z_t, h_t) p(z_t| h_t) / p(x_t) ~ N(mean(phi_1), stddev(phi_2))
-
-        Approximate the Bayesian posterior using a NN that takes the the prior and current observation.
-        """
-        assert isinstance(h, torch.Tensor)
-        # we can remove the transition from this, probably causing a longer training time?
-        # this is as p = f(h) and q = f_2(h, p, o) = f_2(h, f(h), o)
-        # so if q = f_3(h, o) it can match f_2(h, f(h), o)
-        # would probably make for a more robust method as p could change distribution and you wouldnt need to change q
-        prior = self.transition.forward(h)
-        inputs = torch.cat([prior.mean, prior.stddev, h, obs], dim=-1)
-        return self.posterior_model(inputs)
     
-    def prior(self, h: Tensor) -> State:
-        return self.transition(h)
-
     def observation_reconstruction_error(self, posterior_state: State, obs: Tensor, h: Tensor):
         """
         Taking a sample of the posterior states for MC intergration of the expectation over the posterior and
         using the observation model to move from the state space to observation space. I then find the mse 
         loss for my reconstruction vs the real observation
         """
-        return nn.functional.mse_loss(self.observation(h, posterior_state.mean), obs).mean() # use mse not log likelihood as the observation model is assumed to be Gaussian
+        reconstructed_observation, conditional_distribution = self.observation(h, posterior_state.mean)
+        return - conditional_distribution.log_prob(obs).mean()
 
     def reward_reconstruction_error(self, posterior_state: State, reward: Tensor, h: Tensor):
         """
@@ -219,4 +205,5 @@ class RSSM(nn.Module):
         using the observation model to move from the state space to observation space. I then find the mse 
         loss for my reconstruction vs the real observation
         """
-        return nn.functional.mse_loss(self.reward(h, posterior_state.mean), reward).mean() # use mse not log likelihood as the observation model is assumed to be Gaussian
+        reconstructed_reward, conditional_distribution = self.reward(h, posterior_state.mean)
+        return - conditional_distribution.log_prob(reward).mean()

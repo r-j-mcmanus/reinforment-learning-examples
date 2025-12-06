@@ -50,6 +50,14 @@ class Actor(nn.Module):
 
         return action, log_prob, normal
 
+def _orthogonal_init(layer, gain=1.0):
+    """Orthogonal initialization maintains stable variance through deep networks and works 
+    very well with tanh / ReLU activations."""
+    if isinstance(layer, nn.Linear):
+        nn.init.orthogonal_(layer.weight, gain)
+        nn.init.zeros_(layer.bias)
+
+
 # Basic Critic network
 class Critic(nn.Module):
     def __init__(self, state_dim):
@@ -73,8 +81,12 @@ class DDPG:
                 state_dim = Constants.World.latent_state_dimension):
         
         self.actor = Actor(state_dim, action_dim, max_action)
-        self.actor_target = Actor(state_dim, action_dim, max_action)
         self.critic = Critic(state_dim)
+        
+        self.actor.apply(lambda l: _orthogonal_init(l, gain=0.01))
+        self.critic.apply(lambda l: _orthogonal_init(l, gain=1.0))
+
+        self.actor_target = Actor(state_dim, action_dim, max_action)
         self.critic_target = Critic(state_dim)
 
         self.actor_target.load_state_dict(self.actor.state_dict())

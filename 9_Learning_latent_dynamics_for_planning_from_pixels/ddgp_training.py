@@ -4,8 +4,6 @@ from torch import Tensor
 
 from episode_memory import EpisodeMemory
 from constants import *
-from critic import Critic
-from policy import Policy
 from rssm import RSSM
 from ddgp import DDPG
 from plots import plot_ll_data
@@ -38,7 +36,7 @@ def train_critic(rssm: RSSM, ddpg:DDPG, latent_starts: Tensor, obs: Tensor, acti
     return critic_loss.item()
 
 
-def train_actor(rssm: RSSM, ddpg:DDPG, latent_starts: Tensor, obs: Tensor, actions: Tensor) -> float:
+def train_actor(rssm: RSSM, ddpg:DDPG, latent_starts: Tensor, obs: Tensor, actions: Tensor) -> tuple[float,float,float,float]:
     # Actor loss eq.6 2010.02193
     rho = Constants.Behaviors.actor_gradient_mixing
 
@@ -72,35 +70,33 @@ def train_actor(rssm: RSSM, ddpg:DDPG, latent_starts: Tensor, obs: Tensor, actio
     return actor_loss.item(), reinforce_loss.item(), reparam_loss.item(), entropy_loss.item()
 
 
-def latent_learning_2(rssm: RSSM, memory: EpisodeMemory, ddpg: DDPG, episode: int, df: pd.DataFrame):    
+def train_ddpg(rssm: RSSM, memory: EpisodeMemory, ddpg: DDPG, episode: int, epoch: int, df: pd.DataFrame):    
     """
     Sample N latent trajectories, these will be in M different episodes. 
     Pick the M sequences, find the values for h and q for all elements in that episode with the RSSM.
     For the actual index in that episode we latently learn from, roll out the transitions for H steps
     """
-    for epoch in range(Constants.Behaviors.latent_epoch_count):
-        latent_starts, obs, actions = memory.sample_for_latent()
+    latent_starts, obs, actions = memory.sample_for_latent()
 
-        critic_loss = train_critic(rssm, ddpg, latent_starts, obs, actions)
-        actor_total_loss, reinforce_loss, dynamic_backprop_loss, entropy  = train_actor(rssm, ddpg, latent_starts, obs, actions)
-        print(f'Episode {episode}, Epoch {epoch}, Critic loss {critic_loss}, Actor loss {actor_total_loss}')
+    critic_loss = train_critic(rssm, ddpg, latent_starts, obs, actions)
+    actor_total_loss, reinforce_loss, dynamic_backprop_loss, entropy  = train_actor(rssm, ddpg, latent_starts, obs, actions)
+    print(f'Episode {episode}, Epoch {epoch}, Critic loss {critic_loss}, Actor loss {actor_total_loss}')
 
-        # soft update the target networks
-        # larger UPDATE_DELAY reduces variance
-        # allowing for critic to represent policy by allowing multiple changes based on policy
-        #if step % Constants.Behaviour.slow_critic_update_interval == 0:
-        ddpg.soft_update()
-        
-        row = {}
-        row['epoch'] = epoch
-        row['episode'] = episode
-        row['actor_loss'] = actor_total_loss
-        row['reinforce_loss'] = reinforce_loss
-        row['dynamic_backprop_loss'] = dynamic_backprop_loss
-        row['entropy'] = entropy
-        row['critic_loss'] = critic_loss
-        df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
-    plot_ll_data(df, 0)
+    # soft update the target networks
+    # larger UPDATE_DELAY reduces variance
+    # allowing for critic to represent policy by allowing multiple changes based on policy
+    #if step % Constants.Behaviour.slow_critic_update_interval == 0:
+    ddpg.soft_update()
+    
+    row = {}
+    row['epoch'] = epoch
+    row['episode'] = episode
+    row['actor_loss'] = actor_total_loss
+    row['reinforce_loss'] = reinforce_loss
+    row['dynamic_backprop_loss'] = dynamic_backprop_loss
+    row['entropy'] = entropy
+    row['critic_loss'] = critic_loss
+    df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
     return df
 
 

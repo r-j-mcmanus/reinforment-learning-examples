@@ -1,7 +1,9 @@
 import torch
+from torch.distributions.normal import Normal
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+from constants import Constants
 
 
 class Decoder(nn.Module):
@@ -18,30 +20,46 @@ class Decoder(nn.Module):
             hidden_size (int): Size of hidden layers.
         """
         super().__init__()
-        self.input_size = input_size
-        self.output_size = output_size
-        self.activation = activation
 
-        self._output_activation = output_activation
+        width = Constants.Common.MLP_width
+        self.l1 = nn.Linear(input_size, width)
+        self.l2 = nn.Linear(width, width)
+        # Output mean and log_std
+        self.mean = nn.Linear(width, output_size)
+        self.log_std = nn.Linear(width, output_size)
 
-        # Decoder
-        self.fc1 = nn.Linear(self.input_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc_out = nn.Linear(hidden_size, output_size)
+        self.LOG_STD_MIN = -26
+        self.LOG_STD_MAX = 2
 
-        self._init_weights()
+        self.apply(lambda l: _orthogonal_init(l, gain=0.01))
 
-    def _init_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
-                nn.init.zeros_(m.bias)
+    def forward(self, hidden_state: Tensor, latent_state: Tensor, 
+                deterministic: bool = False, reparameterize: bool = True) -> tuple[Tensor, Normal]:
+        x = torch.concat([hidden_state, latent_state], dim=-1)
+        x = F.relu(self.l1(x))
+        x = F.relu(self.l2(x))
 
-    def forward(self, h: Tensor, s: Tensor) -> Tensor:
-        x = torch.cat([h,s], dim = -1)
-        x = self.activation(self.fc1(x))
-        x = self.activation(self.fc2(x))
-        x = self.fc_out(x)
-        if self._output_activation is not None:
-            x = self._output_activation(x)
-        return x
+        mean: Tensor = self.mean(x)
+        log_std: Tensor = self.log_std(x).clamp(self.LOG_STD_MIN, self.LOG_STD_MAX)
+        std = log_std.exp()
+
+        normal_dist = torch.distributions.Normal(mean, std)
+        if deterministic:
+            z = mean
+        else:
+            # Reparameterization trick
+            z = normal_dist.rsample() if reparameterize else normal_dist.sample()
+
+        return z, normal_dist
+
+    def loss(self, h: Tensor, latent: Tensor, target: Tensor):
+        reconstructed_observation, conditional_distribution = self.forward(h, latent)
+        return - conditional_distribution.log_prob(target).mean()
+
+
+def _orthogonal_init(layer, gain=1.0):
+    """Orthogonal initialization maintains stable variance through deep networks and works 
+    very well with tanh / ReLU activations."""
+    if isinstance(layer, nn.Linear):
+        nn.init.orthogonal_(layer.weight, gain)
+        nn.init.zeros_(layer.bias)
