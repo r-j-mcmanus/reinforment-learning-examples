@@ -47,24 +47,22 @@ class Actor(nn.Module):
 
         # Log-prob with Tanh correction
         log_prob = normal.log_prob(z) - torch.log(1 - torch.tanh(z).pow(2) + 1e-6)
-        log_prob = log_prob.sum(dim=1, keepdim=True)
 
         return action, log_prob, normal
 
 # Basic Critic network
 class Critic(nn.Module):
-    def __init__(self, state_dim, action_dim):
+    def __init__(self, state_dim):
         super().__init__()
         width = Constants.Common.MLP_width
-        self.l1 = nn.Linear(state_dim + action_dim, width)
+        self.l1 = nn.Linear(state_dim, width)
         self.l2 = nn.Linear(width, width)
         self.l3 = nn.Linear(width, 1)
 
-    def forward(self, state, action):
-        x = torch.cat([state, action], dim=1)
-        x = F.relu(self.l1(x))
+    def forward(self, state):
+        x = F.relu(self.l1(state))
         x = F.relu(self.l2(x))
-        return self.l3(x)
+        return self.l3(x).squeeze(dim=-1)
 
 class DDPG:
     def __init__(self, action_dim, max_action,
@@ -74,11 +72,10 @@ class DDPG:
                 tau=Constants.Behaviors.tau, 
                 state_dim = Constants.World.latent_state_dimension):
         
-
         self.actor = Actor(state_dim, action_dim, max_action)
         self.actor_target = Actor(state_dim, action_dim, max_action)
-        self.critic = Critic(state_dim, action_dim)
-        self.critic_target = Critic(state_dim, action_dim)
+        self.critic = Critic(state_dim)
+        self.critic_target = Critic(state_dim)
 
         self.actor_target.load_state_dict(self.actor.state_dict())
         self.critic_target.load_state_dict(self.critic.state_dict())
@@ -86,13 +83,18 @@ class DDPG:
         self.actor_optimizer = optim.AdamW(self.actor.parameters(), lr=a_lr)
         self.critic_optimizer = optim.AdamW(self.critic.parameters(), lr=c_lr)
 
+        self.actor_loss_foo = F.mse_loss
+        self.critic_loss_foo = F.mse_loss
+
         self.gamma = gamma
         self.tau = tau
         self.max_action = max_action
 
-    def select_action(self, state, reparameterize=False) -> Tensor:
-        state = torch.FloatTensor(state.reshape(1, -1))
-        action, log_prob, normal = self.actor(state, reparameterize=reparameterize)
+    def select_action(self, state, target=False, reparameterize=False) -> Tensor:
+        if len(state.shape) == 1:
+            state = torch.FloatTensor(state.reshape(1, -1))
+        actor = self.actor_target if target else self.actor 
+        action, log_prob, normal = actor(state, reparameterize=reparameterize)
         return action.detach()
 
     def train(self, episode_memory: EpisodeMemory, rssm: RSSM, df: pd.DataFrame, batch_size: int = Constants.Behaviors.trajectory_count):
@@ -159,8 +161,6 @@ class DDPG:
 
     def train_critic(self, states: Tensor, actions: Tensor, rewards: Tensor, next_states: Tensor) -> float:
         # Critic loss eq.5 2010.02193
-
-
         with torch.no_grad():
             next_actions, _, _ = self.actor_target(next_states)
             target_Q = self.critic_target(next_states, next_actions)

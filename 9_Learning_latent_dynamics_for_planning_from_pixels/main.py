@@ -14,7 +14,7 @@ from rssm import RSSM
 from rssm_training import train_rssm
 from constants import *
 from episode_memory import EpisodeMemory
-from actor_training import latent_learning
+from ddgp_training import latent_learning_2
 from critic import Critic
 from policy import Policy
 from ddgp import DDPG
@@ -43,7 +43,7 @@ def main():
 
     # Simple replay memory to store observations and actions
     record_ep_step = 10 # How many env interactions we allow before we train the actor and RSSM
-    path = Path("9_Learning_latent_dynamics_for_planning_from_pixels\cache\my_object.pkl")
+    path = Path("9_Learning_latent_dynamics_for_planning_from_pixels/cache/my_object.pkl")
     if path.exists():
         with path.open("rb") as f:
             memory: EpisodeMemory = pickle.load(f)
@@ -76,7 +76,7 @@ def main():
             # no point training actor until we start caring about the kl divergence
             if True: #len(df_rssm) > Constants.World.beta_growth_rate:
                 print(f'Training Actor Critic on episode {episode}')
-                df_ll = ddpg.train(memory, rssm, df_ll)
+                df_ll = latent_learning_2(rssm, memory, ddpg, episode, df_ll)
 
                 #df_ll = latent_learning(rssm, memory, critic, actor, episode, df_ll)
                 

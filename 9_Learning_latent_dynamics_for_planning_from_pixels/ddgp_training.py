@@ -2,16 +2,77 @@ import pandas as pd
 import torch
 from torch import Tensor
 
-from latent_memory import LatentMemory
 from episode_memory import EpisodeMemory
 from constants import *
 from critic import Critic
 from policy import Policy
 from rssm import RSSM
+from ddgp import DDPG
 from plots import plot_ll_data
 
 
-def latent_learning(rssm: RSSM, memory: EpisodeMemory, critic: Critic, actor: Policy, episode: int, df: pd.DataFrame):    
+def train_critic(rssm: RSSM, ddpg:DDPG, latent_starts: Tensor, obs: Tensor, actions: Tensor) -> float:
+    # detach world model results
+    with torch.no_grad():
+        # where we start dreaming for the traj count of dreams
+        z_latent_start, h_latent_start = rollout_transitions(rssm, latent_starts, obs, actions)
+        # the im horizon of future states following the target actor policy
+        dreamt_z, dreamt_h = dream_sequence(rssm, ddpg, z_latent_start, h_latent_start, target = True)
+        rewards: Tensor = rssm.reward(dreamt_h, dreamt_z)
+    
+    # we use the gradients of L_targets when finding the critic loss function
+    with torch.no_grad():
+        # the target values for the dreamt rollout the target network given dreamt rewards the actor gives rise to
+        target_values = ddpg.critic_target(dreamt_z)
+        L_targets = compute_lambda_targets(rewards, target_values)
+
+    # the critic aims to predict future returns for the actor's policy given the current state
+    critic_value = ddpg.critic(z_latent_start)
+
+    critic_loss = ddpg.critic_loss_foo(critic_value, L_targets)
+
+    ddpg.critic_optimizer.zero_grad()
+    critic_loss.backward()
+    ddpg.critic_optimizer.step()
+
+    return critic_loss.item()
+
+
+def train_actor(rssm: RSSM, ddpg:DDPG, latent_starts: Tensor, obs: Tensor, actions: Tensor) -> float:
+    # Actor loss eq.6 2010.02193
+    rho = Constants.Behaviors.actor_gradient_mixing
+
+    with torch.no_grad():
+        z_latent_start, h_latent_start = rollout_transitions(rssm, latent_starts, obs, actions)
+    dreamt_z, dreamt_h = dream_sequence(rssm, ddpg, z_latent_start, h_latent_start, target=False)
+    dreamt_rewards: Tensor = rssm.reward(dreamt_h, dreamt_z)
+    
+    dreamt_target_values: Tensor = ddpg.critic_target(dreamt_z)
+    # see eq.4 2010.02193 for lambda def, basically for each t in horizon, take the weighted mean of the critic reward and the state's reward 
+    L_targets = compute_lambda_targets(dreamt_rewards, dreamt_target_values)
+    action_weight = (dreamt_target_values - L_targets).detach()
+
+    # reinforce_loss
+    # the associated gradient is from the distribution not the sample, so we do not use the reparametrisation trick
+    action_sf, log_prob_sf, dist_sf = ddpg.actor(dreamt_z, reparameterize=False)
+    reinforce_loss = -rho * (log_prob_sf.sum(-1) * action_weight).mean()
+    
+    # reparam_loss
+    reparam_loss = -(1-rho) * (L_targets.mean())
+
+    # entropy loss
+    entropy_loss = -Constants.Behaviors.actor_entropy_loss_scale * dist_sf.entropy().sum(dim=-1).mean()
+
+    actor_loss = reinforce_loss + reparam_loss + entropy_loss
+    
+    ddpg.actor_optimizer.zero_grad()
+    actor_loss.backward()
+    ddpg.actor_optimizer.step()
+
+    return actor_loss.item(), reinforce_loss.item(), reparam_loss.item(), entropy_loss.item()
+
+
+def latent_learning_2(rssm: RSSM, memory: EpisodeMemory, ddpg: DDPG, episode: int, df: pd.DataFrame):    
     """
     Sample N latent trajectories, these will be in M different episodes. 
     Pick the M sequences, find the values for h and q for all elements in that episode with the RSSM.
@@ -20,35 +81,16 @@ def latent_learning(rssm: RSSM, memory: EpisodeMemory, critic: Critic, actor: Po
     for epoch in range(Constants.Behaviors.latent_epoch_count):
         latent_starts, obs, actions = memory.sample_for_latent()
 
-        # detach world model results
-        with torch.no_grad():
-            z_latent_start, h_latent_start = rollout_transitions(rssm, latent_starts, obs, actions)
-        dreamt_z, dreamt_h = dream_sequence(rssm, actor, z_latent_start, h_latent_start)
-        with torch.no_grad():
-            rewards: Tensor = rssm.reward(dreamt_h, dreamt_z)
-        
-        dreamt_z, dreamt_h, rewards = dreamt_z.detach(), dreamt_h.detach(), rewards.detach()
-
-        target_values = critic.target(dreamt_z)
-
-        # we use the gradients of L_targets when finding the critic loss function
-        L_targets = compute_lambda_targets(rewards, target_values)
-
-        # find the predicted state value for the stabilising critic from the current state 
-        predicted_state_values = critic.predicted(dreamt_z)
-
-        # optimise the stabilising net based on the minibatch
-        actor_total_loss, reinforce_loss, dynamic_backprop_loss, entropy = actor.optimise(critic, L_targets, dreamt_z.detach()) 
-        critic_loss = critic.optimise(predicted_state_values, L_targets)
+        critic_loss = train_critic(rssm, ddpg, latent_starts, obs, actions)
+        actor_total_loss, reinforce_loss, dynamic_backprop_loss, entropy  = train_actor(rssm, ddpg, latent_starts, obs, actions)
         print(f'Episode {episode}, Epoch {epoch}, Critic loss {critic_loss}, Actor loss {actor_total_loss}')
 
         # soft update the target networks
         # larger UPDATE_DELAY reduces variance
         # allowing for critic to represent policy by allowing multiple changes based on policy
         #if step % Constants.Behaviour.slow_critic_update_interval == 0:
-        actor.soft_update()
-        critic.soft_update()
-
+        ddpg.soft_update()
+        
         row = {}
         row['epoch'] = epoch
         row['episode'] = episode
@@ -57,10 +99,10 @@ def latent_learning(rssm: RSSM, memory: EpisodeMemory, critic: Critic, actor: Po
         row['dynamic_backprop_loss'] = dynamic_backprop_loss
         row['entropy'] = entropy
         row['critic_loss'] = critic_loss
-        _df = pd.DataFrame([row])
-        df = pd.concat([df, _df], ignore_index=True)
+        df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
     plot_ll_data(df, 0)
     return df
+
 
 def rollout_transitions(rssm: RSSM, latent_starts: dict[int, list[int]], obs: Tensor, actions: Tensor)->tuple[Tensor, Tensor]:
     """
@@ -145,8 +187,7 @@ def compute_lambda_targets(rewards: Tensor, target_values: Tensor,
     return lambda_returns
 
 
-
-def dream_sequence(rssm: RSSM, actor: Policy, z_latent_start: Tensor, h_latent_start: Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+def dream_sequence(rssm: RSSM, ddgp: DDPG, z_latent_start: Tensor, h_latent_start: Tensor, target: bool) -> tuple[torch.Tensor, torch.Tensor]:
     """Imagination MDP: 
     Sample from the states used during the rssm training for z_0 and h_0. 
     Returns a sequence of states z_{1:H} outputed by the transition predictor ~ p(z_t | z_{t-1}, a_{t-1})
@@ -158,6 +199,7 @@ def dream_sequence(rssm: RSSM, actor: Policy, z_latent_start: Tensor, h_latent_s
     actor: Policy
     z_latent_start: Tensor with shape (trajectory count, latent sate dimension)
     h_latent_start: Tensor with shape (trajectory count, hidden sate dimension)
+    target: in the dreamt sequence, do we use the target network for picking actions
 
     Returns
     -------
@@ -170,8 +212,8 @@ def dream_sequence(rssm: RSSM, actor: Policy, z_latent_start: Tensor, h_latent_s
     z = z_latent_start
     h = h_latent_start
     for _ in range(Constants.Behaviors.imagination_horizon):
-        action = actor.predict(z)
-        with torch.no_grad():
+        action = ddgp.select_action(z, target=target)
+        with torch.no_grad(): 
             h = rssm.deterministic_step(z, action, h)
             z = rssm.transition(h).sample
         dreamt_z.append(z)
