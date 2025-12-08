@@ -86,10 +86,8 @@ class DDPG:
         self.actor.apply(lambda l: _orthogonal_init(l, gain=0.01))
         self.critic.apply(lambda l: _orthogonal_init(l, gain=1.0))
 
-        self.actor_target = Actor(state_dim, action_dim, max_action)
         self.critic_target = Critic(state_dim)
 
-        self.actor_target.load_state_dict(self.actor.state_dict())
         self.critic_target.load_state_dict(self.critic.state_dict())
 
         self.actor_optimizer = optim.AdamW(self.actor.parameters(), lr=a_lr)
@@ -101,11 +99,10 @@ class DDPG:
         self.tau = tau
         self.max_action = max_action
 
-    def select_action(self, state, target=False, reparameterize=False) -> Tensor:
+    def select_action(self, state, reparameterize=False) -> Tensor:
         if len(state.shape) == 1:
             state = torch.FloatTensor(state.reshape(1, -1))
-        actor = self.actor_target if target else self.actor 
-        action, log_prob, normal = actor(state, reparameterize=reparameterize)
+        action, log_prob, normal = self.actor(state, reparameterize=reparameterize)
         return action.detach()
 
     def train(self, episode_memory: EpisodeMemory, rssm: RSSM, df: pd.DataFrame, batch_size: int = Constants.Behaviors.trajectory_count):
@@ -140,9 +137,6 @@ class DDPG:
         for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()):
             target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
-        for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
-
     def train_actor(self, states: State) -> tuple[float, float, float, float]:
         # Actor loss eq.6 2010.02193
         rho = Constants.Behaviors.actor_gradient_mixing
@@ -173,7 +167,7 @@ class DDPG:
     def train_critic(self, states: Tensor, actions: Tensor, rewards: Tensor, next_states: Tensor) -> float:
         # Critic loss eq.5 2010.02193
         with torch.no_grad():
-            next_actions, _, _ = self.actor_target(next_states)
+            next_actions, _, _ = self.actor(next_states)
             target_Q = self.critic_target(next_states, next_actions)
             #target = rewards + (1 - dones) * self.gamma * target_Q
             target = rewards + self.gamma * target_Q
