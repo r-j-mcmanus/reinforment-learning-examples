@@ -51,10 +51,13 @@ def main():
         with path.open("wb") as f:
             pickle.dump(memory, f)
 
-
     # Instantiate the RSSM model for planning
     rssm = RSSM(obs_size, action_size)
-    rssm, df_rssm = train_rssm(rssm, memory, episode=0, epoch=0, df=df_rssm) # initial training on warm up data
+    rssm_models_path = Path('9_Learning_latent_dynamics_for_planning_from_pixels/models/rssm')
+    if rssm_models_path.exists():
+        rssm.load_state_dict(torch.load(rssm_models_path, weights_only=True))
+    else:
+        rssm, df_rssm = train_rssm(rssm, memory, episode=0, epoch=0, df=df_rssm) # initial training on warm up data
 
     ddpg = DDPG(action_size, 1)
 
@@ -62,15 +65,18 @@ def main():
 
         df_env = walk_env(env, memory, rssm, ddpg, episode, df_env)
 
+        if len(df_rssm) % 100:
+            torch.save(rssm.state_dict(), rssm_models_path)
+
         if True: # (episode % record_ep_step == 0) :
             plot_env_data(df_env, 0)
+            print(f'Training on episode {episode}')
+
             for epoch in range(Constants.World.epoch_count):
-                print(f'Training RSSM on episode {episode}')
-                rssm, df_rssm = train_rssm(rssm, memory, episode, epoch, df_rssm)
+                # rssm, df_rssm = train_rssm(rssm, memory, episode, epoch, df_rssm)
                 
                 # no point training actor until we start caring about the kl divergence
-                if len(df_rssm) > 150:
-                    print(f'Training Actor Critic on episode {episode}')
+                # if len(df_rssm) > 500:
                     df_ll = train_ddpg(rssm, memory, ddpg, episode, epoch, df_ll)
             plot_rssm_data(df_rssm, 0)
             plot_ll_data(df_ll, 0)
@@ -88,7 +94,7 @@ def walk_env(env: Env, memory: EpisodeMemory, rssm: RSSM, ddpg: DDPG, episode: i
         obs = torch.tensor(obs, dtype=torch.float32, device=DEVICE)
 
         h = torch.zeros(Constants.World.hidden_state_dimension, device=DEVICE)
-        s = rssm.representation(obs, h).sample
+        s = rssm.representation.forward(obs, h).sample
 
         total_reward = 0
 

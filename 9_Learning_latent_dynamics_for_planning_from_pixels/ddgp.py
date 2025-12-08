@@ -67,7 +67,7 @@ class Critic(nn.Module):
         self.l2 = nn.Linear(width, width)
         self.l3 = nn.Linear(width, 1)
 
-    def forward(self, state):
+    def forward(self, state) -> Tensor:
         x = F.relu(self.l1(state))
         x = F.relu(self.l2(x))
         return self.l3(x).squeeze(dim=-1)
@@ -95,7 +95,6 @@ class DDPG:
         self.actor_optimizer = optim.AdamW(self.actor.parameters(), lr=a_lr)
         self.critic_optimizer = optim.AdamW(self.critic.parameters(), lr=c_lr)
 
-        self.actor_loss_foo = F.mse_loss
         self.critic_loss_foo = F.mse_loss
 
         self.gamma = gamma

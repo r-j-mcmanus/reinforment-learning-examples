@@ -9,22 +9,16 @@ _DATE = dt.now().strftime("%Y%m%d%H%M")
 _PATH = '9_Learning_latent_dynamics_for_planning_from_pixels'
 
 def plot_rssm_data(df: pd.DataFrame, episode: int):
-    print(f'making plots {episode}')
     with plt.ioff():
         _plot_df(df, episode, 'rssm_loss')
-    print(f'finished plots {episode}')
 
 def plot_ll_data(df: pd.DataFrame, episode: int):
-    print(f'making plots {episode}')
     with plt.ioff():
         _plot_df(df, episode, 'actor_critic_loss')
-    print(f'finished plots {episode}')
 
 def plot_env_data(df: pd.DataFrame, episode: int):
-    print(f'making plots {episode}')
     with plt.ioff():
         _plot_df(df, episode, 'env')
-    print(f'finished plots {episode}')
 
 def _plot_df(df: pd.DataFrame, episode: int, folder_name: str):
 

@@ -1,3 +1,5 @@
+from contextlib import contextmanager
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -96,6 +98,53 @@ class RSSM(nn.Module):
 
         # all these networks are jointly optimised
         self.optimizer = optim.AdamW(self.parameters(), lr=1e-3)
+
+    @contextmanager
+    def freeze_module(self):
+        """
+        Temporarily disable gradients for all parameters in `module`
+        while keeping the computation graph intact.
+
+        Usage:
+            with freeze_module(transition):
+                out = transition(x)   # differentiable output
+                loss = ...
+            # automatically restores requires_grad flags
+        """
+        # Save current flags
+        old_transition_requires_grad = {p: p.requires_grad for p in self.transition.parameters()}
+        old_representation_requires_grad = {p: p.requires_grad for p in self.representation.parameters()}
+        old_observation_requires_grad = {p: p.requires_grad for p in self.observation.parameters()}
+        old_reward_requires_grad = {p: p.requires_grad for p in self.reward.parameters()}
+        old_discount_requires_grad = {p: p.requires_grad for p in self.discount.parameters()}
+        
+        try:
+            # Freeze parameters
+            for p in self.transition.parameters():
+                p.requires_grad = False
+            for p in self.representation.parameters():
+                p.requires_grad = False
+            for p in self.observation.parameters():
+                p.requires_grad = False
+            for p in self.reward.parameters():
+                p.requires_grad = False
+            for p in self.discount.parameters():
+                p.requires_grad = False
+
+            yield
+
+        finally:
+            # Restore original flags
+            for p, req in old_transition_requires_grad.items():
+                p.requires_grad = req
+            for p, req in old_representation_requires_grad.items():
+                p.requires_grad = req
+            for p, req in old_observation_requires_grad.items():
+                p.requires_grad = req
+            for p, req in old_reward_requires_grad.items():
+                p.requires_grad = req
+            for p, req in old_discount_requires_grad.items():
+                p.requires_grad = req
 
     def transition_rollout(self, initial_state: State, initial_hidden_state: Tensor, action: Tensor) -> list[State]:
         """predicts the next state from both the deterministic and stochastic representation spate model

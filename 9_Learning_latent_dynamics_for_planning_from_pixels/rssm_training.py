@@ -9,8 +9,6 @@ import pandas as pd
 from rssm import RSSM
 from state import State
 from episode_memory import EpisodeMemory
-from latent_memory import LatentMemory
-from plots import plot_rssm_data
 
 from constants import *
 
@@ -109,7 +107,6 @@ def train_rssm(rssm: RSSM, episode_memory: EpisodeMemory, episode: int, epoch: i
     rssm.optimizer.step()
 
     df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
-    print(f"Episode {episode}, Epoch {epoch}, Total Loss: {loss.item():.4f}")
 
     return rssm, df
 
