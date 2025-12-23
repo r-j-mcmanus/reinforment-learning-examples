@@ -8,3 +8,4 @@ gymnasium[classic_control]
 gymnasium[mujoco]
 gymnasium[other]
 seaborn
+yfinance
