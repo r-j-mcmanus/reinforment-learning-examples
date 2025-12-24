@@ -30,6 +30,9 @@ def set_global_seed(seed: int = 42):
 
 set_global_seed()
 
+# look into interactivebrokers when a real api is needed!
+# https://www.reddit.com/r/algotrading/comments/1njxtr5/what_is_for_you_the_best_broker_for_algorithmic/
+
 # for ease use all symbols in the same exchange so the data is consistent amongst them
 
 # all in NASDAQ
@@ -53,7 +56,7 @@ LSE_SYMBOLS = [
     'AZN.L'     # Healthcare / Pharmaceuticals
 ]
 BATCH_SIZE = 200
-EPISODE_COUNT = 50
+EPISODE_COUNT = 1000
 
 env = AssetEnvironment(symbols = SYMBOLS)
 # sets initial portfolio vec to (1,0,...,0) = w_0
@@ -86,6 +89,9 @@ for n in range(EPISODE_COUNT):
     actor.optimizer.step()
     float_total_reward = float(total_reward.detach().numpy())
     total_rewards.append(float_total_reward)
-    print(float_total_reward)
-print(min(total_rewards), max(total_rewards), total_rewards[:5], total_rewards[:-5])
+    #print(float_total_reward)
+print('min        -', min(total_rewards))
+print('max        -', max(total_rewards))
+print('starting 5 -', total_rewards[:5])
+print('ending 5   -', total_rewards[-5:])
 a=1

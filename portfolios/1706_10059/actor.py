@@ -45,7 +45,7 @@ class Actor(nn.Module):
         
         Arguments
         ---------
-        obs - the observation of shape (Batch, History, Features, Symbols)
+        obs - the observation of shape (Batch, Symbols, History, Features)
         w_tm1 - the previous portfolio of shape (Batch, Symbols + 1) where the extra symbol is cash help in the [0]th element of the dimension
         """
         
@@ -53,9 +53,7 @@ class Actor(nn.Module):
         assert isinstance(w_tm1, Tensor)
         
         # format the data for the network
-        #x = obs.permute(2,1,0)
-
-        x = obs.permute(0, 3, 2, 1)          # (batch, symbols, features, history)
+        x = obs.permute(0, 1, 3, 2)          # (batch, symbols, features, history)
         x = x.reshape(-1, x.shape[2], x.shape[3]) # (batch * symbols, features, history)
 
         # Conv over time per asset
@@ -74,7 +72,7 @@ class Actor(nn.Module):
         
         # worried i should use x.reshape(obs.shape[3], obs.shape[1])
         # to check pass the same obs to all samples
-        x = x.reshape(obs.shape[0], obs.shape[3]) # (batch, symbols)
+        x = x.reshape(obs.shape[0], obs.shape[1]) # (batch, symbols)
 
         # prepend cash
         x = torch.concat([self.cash_bias.expand(obs.shape[0], 1), x], dim=-1)

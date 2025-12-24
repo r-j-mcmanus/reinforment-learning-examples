@@ -25,7 +25,7 @@ class AssetEnvironment(Env):
                  end_date: dt = dt(year=2025, month=12, day=20),
                  interval: str = '30m',
                  input_period_len: int = 50,
-                 max_steps: int = 50,
+                 max_steps: int = 30,
                  commission_rate: float = 0.0025 # 0.25%
                 ):
         
@@ -41,6 +41,8 @@ class AssetEnvironment(Env):
 
         # for sampling
         self._raw_data: pd.DataFrame = self.__init_get_raw_data(symbols, start_date, end_date, interval)
+        self.symbol_data_on_device: torch.Tensor = self._push_raw_to_torch() # in the shape (symbol, history, feature)
+        self._subsamples = torch.Tensor([])
 
         # for calculating reward
         self._portfolio = np.zeros(shape=len(self._symbols_const)+1, dtype='float32')
@@ -92,6 +94,18 @@ class AssetEnvironment(Env):
             raw_data.to_feather(raw_data_file_path)
         return raw_data
     
+    def _push_raw_to_torch(self) -> torch.Tensor:
+        """Moves the historical data from the dataframe onto the device in a tensor of shape (symbol, history, feature)"""
+        df = self._raw_data.drop(['Open', 'Volume'], axis=1)
+
+        symbol_data_list: list[np.ndarray] = []
+        for sym in self._symbols_const:
+            close_high_low: np.ndarray = df[:][sym].values
+            symbol_data_list.append(close_high_low)
+        symbol_data = np.stack(symbol_data_list)
+        # in the shape (symbol, feature, history)
+        return torch.from_numpy(symbol_data).float().to(DEVICE)
+
     def step(self, action: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, bool, bool, dict]:
         """Move to the next datapoint in the stock data, update the portfolio stored, calculate the 
         rewards which is the return on the previous portfolio and minus the cost of changing the portfolio"""
@@ -159,10 +173,14 @@ class AssetEnvironment(Env):
         self._set_initial_portfolio() # rest to cash only
 
         # get indices that have at least self._input_period_len_const entries behind them
-        self._obs_index = [i + self._input_period_len_const for i in 
-                           random.sample(range(
-                               len(self._raw_data) - self._input_period_len_const - self._max_steps_const) # cannot pick so early that we dont have a history, nor late we dont have an episode 
-                               , batch_size)]
+        self._obs_index = [
+                            i + self._input_period_len_const for i in 
+                            random.sample( # pick without replacement
+                                range(
+                                    len(self._raw_data) - self._input_period_len_const - self._max_steps_const
+                                ) # cannot pick so early that we dont have a history, nor late we dont have an episode 
+                                , batch_size)
+                            ]
         self._initial_obs_index = self._obs_index # to track how many steps have been taken
         obs = self._get_subsample() # get the data ending at _obs_index
         info = self._get_info() # get the info dict
@@ -177,29 +195,33 @@ class AssetEnvironment(Env):
     def _get_subsample(self) -> torch.Tensor:
         """Get the n rows before the observation date
         
-        subsamples shape = (Batch, History, Features, Symbols)
+        subsamples shape = (Batch, Symbols, History, Features)
         """
         assert len(self._obs_index) > 0
 
-        sub_samples = []
-        for i in range(len(self._obs_index)):
-            obs_index = self._obs_index[i]
-            sub_sample = self._raw_data.iloc[obs_index - self._input_period_len_const: obs_index].drop(['Open', 'Volume'], axis=1).copy()
-            
-            assert len(sub_sample) == self._input_period_len_const #sanity check
-            
-            final_close = sub_sample['Close'].iloc[-1]
-            for ticker in self._symbols_const:
-                cols_to_norm = (sub_sample.columns.get_level_values('Ticker') == ticker)
-                if not isinstance(sub_sample, pd.DataFrame):
-                    a=1
-                sub_sample.loc[:, cols_to_norm] /= final_close[ticker]
-
-            sub_sample = sub_sample.values.reshape(len(sub_sample), 3, len(self._symbols_const))
-            sub_samples.append(sub_sample)
+        # symbols, history len, features
+        S, H, F = self.symbol_data_on_device.shape
+        # batch size
+        B = len(self._obs_index)
+        # sub-sample length
+        P = self._input_period_len_const
+        # future steps
+        T = self._max_steps_const
+        # how long is the subsample
+        L = P + T
         
-        all_sub_samples = np.stack(sub_samples)
-        return torch.from_numpy(all_sub_samples).float().to(DEVICE)
+        obs_index: torch.Tensor = torch.tensor(self._obs_index).int().to(DEVICE)
+        # we want it in reverse order in steps of -1
+        offsets = torch.arange(L - 1, -1, -1, device=DEVICE)  # (L,)
+        # the indexes for each sub-sample in the batch
+        hist_idx = obs_index[:, None] - offsets[None, :]  # (B, L)
+        # the indexes for each sub-sample in the batch blown up to the 4d data structure we want
+        idx = hist_idx[:, None, :, None].expand(B, S, L, F)
+        # use the tensor of idx to sample self.symbol_data_on_device into shape (S, B, H, F)
+        # Reshape to get the shape we want
+        out = self.symbol_data_on_device[:, hist_idx, :].permute(1, 0, 2, 3)
+
+        return out
     
     def render(self, mode: str = 'human'):
         raise NotImplementedError
