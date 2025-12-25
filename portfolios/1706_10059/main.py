@@ -63,7 +63,7 @@ env = AssetEnvironment(symbols = SYMBOLS)
 # gives x_t where t=1
 total_rewards: list[float] = []
 
-actor= Actor()
+actor= Actor(feature_dim=env.observation_space.shape[-1])
 
 for n in range(EPISODE_COUNT):
     # todo batch multiple sequences at once

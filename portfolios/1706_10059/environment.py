@@ -1,5 +1,6 @@
 import hashlib
 import random
+from dataclasses import dataclass
 from pathlib import Path
 from datetime import datetime as dt
 from datetime import timedelta
@@ -12,7 +13,6 @@ from gymnasium import Env
 from gymnasium import spaces
 
 import yfinance as yf
-ticker = "ANA.AQ"
 
 from constants import *
 
@@ -41,7 +41,9 @@ class AssetEnvironment(Env):
 
         # for sampling
         self._raw_data: pd.DataFrame = self.__init_get_raw_data(symbols, start_date, end_date, interval)
-        self.symbol_data_on_device: torch.Tensor = self._push_raw_to_torch() # in the shape (symbol, history, feature)
+        self._raw_data: pd.DataFrame = self._feature_eng()
+        self._symbol_data_on_device: torch.Tensor = self._push_data_to_torch() # in the shape (symbol, history, feature)
+        self._data_time: torch.Tensor = self._push_times_to_torch()
         self._subsamples = torch.Tensor([])
 
         # for calculating reward
@@ -63,9 +65,18 @@ class AssetEnvironment(Env):
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
-            shape=(input_period_len, 3, len(symbols)),
+            shape=(len(symbols), input_period_len, 3+1), # features: close, high, low, hour
             dtype=np.float32
         )
+
+    def _feature_eng(self) -> pd.DataFrame:
+        # TODO daylight saving messes this up by an hour
+        # can pass opening and closing time to not use min and max
+        df = self._raw_data
+        df = df.reset_index()
+        df['Hour'] = df['Datetime'].dt.hour + df['Datetime'].dt.minute/60 
+        df["Hour"] = (df["Hour"] - df["Hour"].min()) / (df["Hour"].max() - df["Hour"].min())
+        return df
 
     def __init_get_raw_data(self,
                             symbols: list[str],
@@ -85,16 +96,23 @@ class AssetEnvironment(Env):
             raw_data = pd.read_feather(raw_data_file_path)
         else:
             raw_data = yf.download(symbols, start=start_date, end=end_date, interval=interval)
-            assert isinstance(raw_data, pd.DataFrame)
+            assert isinstance(raw_data, pd.DataFrame), "raw data downloaded is not a dataframe"
             if isinstance(raw_data.columns, pd.MultiIndex):
                 raw_data.columns.names = ['Field', 'Ticker']
             else:
                 raise ValueError("Expected MultiIndex columns from yfinance")
 
             raw_data.to_feather(raw_data_file_path)
+        if raw_data.index[0].tz == None:
+            raise Exception('No time zone!')
+        if raw_data.index[0].tz.zone != 'UTC':
+            raw_data.index = raw_data.index.tz_convert("UTC")
         return raw_data
     
-    def _push_raw_to_torch(self) -> torch.Tensor:
+    def _push_times_to_torch(self) -> torch.Tensor:
+        return torch.from_numpy(self._raw_data['Hour'].values).float().to(DEVICE)
+
+    def _push_data_to_torch(self) -> torch.Tensor:
         """Moves the historical data from the dataframe onto the device in a tensor of shape (symbol, history, feature)"""
         df = self._raw_data.drop(['Open', 'Volume'], axis=1)
 
@@ -103,13 +121,16 @@ class AssetEnvironment(Env):
             close_high_low: np.ndarray = df[:][sym].values
             symbol_data_list.append(close_high_low)
         symbol_data = np.stack(symbol_data_list)
-        # in the shape (symbol, feature, history)
-        return torch.from_numpy(symbol_data).float().to(DEVICE)
+        # in the shape (symbol, history, feature)
+        f = torch.from_numpy(symbol_data).float().to(DEVICE)
+        # normalised time since open as feature
+        t = torch.from_numpy(df['Hour'].values).float().to(DEVICE)[None, :, None].expand(8, 449, 1)
+        return torch.cat([f, t], dim=-1).float().to(DEVICE)
 
     def step(self, action: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, bool, bool, dict]:
         """Move to the next datapoint in the stock data, update the portfolio stored, calculate the 
         rewards which is the return on the previous portfolio and minus the cost of changing the portfolio"""
-        assert torch.isclose(action.sum(dim=-1), torch.tensor(1.0), atol=1e-4).all()
+        assert torch.isclose(action.sum(dim=-1), torch.tensor(1.0), atol=1e-4).all(), "portfolio is not normalised"
         
         new_portfolio = action
 
@@ -122,6 +143,7 @@ class AssetEnvironment(Env):
         self._step_number += 1
         terminated = self._step_number >= self._max_steps_const
         truncated = False
+        assert obs.shape[1:] == self.observation_space.shape, 'Obs shape doesn\'t match that specified in self.observation_space'
         return obs, reward, terminated, truncated, info
     
     def _get_reward(self, new_portfolio: torch.Tensor) -> torch.Tensor:
@@ -184,7 +206,7 @@ class AssetEnvironment(Env):
         self._initial_obs_index = self._obs_index # to track how many steps have been taken
         obs = self._get_subsample() # get the data ending at _obs_index
         info = self._get_info() # get the info dict
-
+        assert obs.shape[1:] == self.observation_space.shape, 'Obs shape doesn\'t match that specified in self.observation_space'
         return obs, info
     
     def _set_initial_portfolio(self):
@@ -200,7 +222,7 @@ class AssetEnvironment(Env):
         assert len(self._obs_index) > 0
 
         # symbols, history len, features
-        S, H, F = self.symbol_data_on_device.shape
+        S, H, F = self._symbol_data_on_device.shape
         # batch size
         B = len(self._obs_index)
         # sub-sample length
@@ -208,7 +230,7 @@ class AssetEnvironment(Env):
         # future steps
         T = self._max_steps_const
         # how long is the subsample
-        L = P + T
+        L = P # + T # move to using a single subsample and then splicing it for the obs data
         
         obs_index: torch.Tensor = torch.tensor(self._obs_index).int().to(DEVICE)
         # we want it in reverse order in steps of -1
@@ -219,7 +241,7 @@ class AssetEnvironment(Env):
         idx = hist_idx[:, None, :, None].expand(B, S, L, F)
         # use the tensor of idx to sample self.symbol_data_on_device into shape (S, B, H, F)
         # Reshape to get the shape we want
-        out = self.symbol_data_on_device[:, hist_idx, :].permute(1, 0, 2, 3)
+        out = self._symbol_data_on_device[:, hist_idx, :].permute(1, 0, 2, 3)
 
         return out
     

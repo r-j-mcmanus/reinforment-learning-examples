@@ -10,7 +10,8 @@ from constants import *
 
 class Actor(nn.Module):
     def __init__(self, 
-                 feature_dim: int = 3, 
+                 feature_dim: int, 
+                 *,
                  kernel_size: int = 3, 
                  sample_len: int = 50, 
                  hidden1: int = 8,
