@@ -1,6 +1,5 @@
 import hashlib
 import random
-from dataclasses import dataclass
 from pathlib import Path
 from datetime import datetime as dt
 from datetime import timedelta
@@ -143,7 +142,7 @@ class AssetEnvironment(Env):
         self._step_number += 1
         terminated = self._step_number >= self._max_steps_const
         truncated = False
-        assert obs.shape[1:] == self.observation_space.shape, 'Obs shape doesn\'t match that specified in self.observation_space'
+        self._assert_obs_shape(obs)
         return obs, reward, terminated, truncated, info
     
     def _get_reward(self, new_portfolio: torch.Tensor) -> torch.Tensor:
@@ -206,7 +205,7 @@ class AssetEnvironment(Env):
         self._initial_obs_index = self._obs_index # to track how many steps have been taken
         obs = self._get_subsample() # get the data ending at _obs_index
         info = self._get_info() # get the info dict
-        assert obs.shape[1:] == self.observation_space.shape, 'Obs shape doesn\'t match that specified in self.observation_space'
+        self._assert_obs_shape(obs)
         return obs, info
     
     def _set_initial_portfolio(self):
@@ -250,3 +249,6 @@ class AssetEnvironment(Env):
     
     def _get_info(self) -> dict:
         return {}
+
+    def _assert_obs_shape(self, obs):
+        assert obs.shape[1:] == self.observation_space.shape, 'Obs shape doesn\'t match that specified in self.observation_space'

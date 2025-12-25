@@ -89,9 +89,12 @@ for n in range(EPISODE_COUNT):
     actor.optimizer.step()
     float_total_reward = float(total_reward.detach().numpy())
     total_rewards.append(float_total_reward)
-    #print(float_total_reward)
+    if n % 10 == 0:
+        print(n, float_total_reward)
+print('------------')
 print('min        -', min(total_rewards))
 print('max        -', max(total_rewards))
 print('starting 5 -', total_rewards[:5])
 print('ending 5   -', total_rewards[-5:])
+print('------------')
 a=1
