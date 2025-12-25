@@ -13,7 +13,6 @@ class Actor(nn.Module):
                  feature_dim: int, 
                  *,
                  kernel_size: int = 3, 
-                 sample_len: int = 50, 
                  hidden1: int = 8,
                  hidden2: int = 4,
                  lr = 3e-5):

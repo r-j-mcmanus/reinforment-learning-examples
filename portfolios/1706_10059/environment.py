@@ -13,7 +13,7 @@ from gymnasium import spaces
 
 import yfinance as yf
 
-from constants import *
+from constants import DEVICE, CONSTANTS
 
 # look into Databento
 
@@ -23,19 +23,17 @@ class AssetEnvironment(Env):
                  start_date: dt = dt(year=2025, month=12, day=20) - timedelta(days=50),
                  end_date: dt = dt(year=2025, month=12, day=20),
                  interval: str = '30m',
-                 input_period_len: int = 50,
-                 max_steps: int = 30,
                  commission_rate: float = 0.0025 # 0.25%
                 ):
         
         super().__init__()
         # consts
-        self._input_period_len_const = input_period_len
+        self._input_period_len_const = CONSTANTS.INPUT_PERIOD_LEN
         self._symbols_const = symbols
-        self._max_steps_const = max_steps
+        self._max_steps_const = CONSTANTS.MAX_STEPS
         self._commission_rate_const = commission_rate
         # init values
-        self._portfolio: torch.Tensor = torch.zeros(1).float().to(DEVICE)
+        self.old_portfolio: torch.Tensor = torch.zeros(1).float().to(DEVICE)
         self._set_initial_portfolio()
 
         # for sampling
@@ -46,8 +44,8 @@ class AssetEnvironment(Env):
         self._subsamples = torch.Tensor([])
 
         # for calculating reward
-        self._portfolio = np.zeros(shape=len(self._symbols_const)+1, dtype='float32')
-        self._portfolio[0] = 1.0
+        self.old_portfolio = np.zeros(shape=len(self._symbols_const)+1, dtype='float32')
+        self.old_portfolio[0] = 1.0
 
         # for tracking obs location
         self._obs_index: list[int] = [0]
@@ -64,7 +62,7 @@ class AssetEnvironment(Env):
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
-            shape=(len(symbols), input_period_len, 3+1), # features: close, high, low, hour
+            shape=(len(symbols), CONSTANTS.INPUT_PERIOD_LEN, 3), # features: close, high, low, hour
             dtype=np.float32
         )
 
@@ -122,26 +120,38 @@ class AssetEnvironment(Env):
         symbol_data = np.stack(symbol_data_list)
         # in the shape (symbol, history, feature)
         f = torch.from_numpy(symbol_data).float().to(DEVICE)
+        return f
         # normalised time since open as feature
         t = torch.from_numpy(df['Hour'].values).float().to(DEVICE)[None, :, None].expand(8, 449, 1)
         return torch.cat([f, t], dim=-1).float().to(DEVICE)
 
     def step(self, action: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, bool, bool, dict]:
-        """Move to the next datapoint in the stock data, update the portfolio stored, calculate the 
-        rewards which is the return on the previous portfolio and minus the cost of changing the portfolio"""
+        """
+        1. Update the portfolio stored
+        2. Move to the next datapoint in the stock data
+        3. Calculate the rewards which is the return on the new portfolio and minus the cost of changing the portfolio
+        """
         assert torch.isclose(action.sum(dim=-1), torch.tensor(1.0), atol=1e-4).all(), "portfolio is not normalised"
         
+        # get portfolio
         new_portfolio = action
 
-        obs = self._get_subsample()
-        reward = self._get_reward(new_portfolio)
-        self._portfolio = new_portfolio
-        info = self._get_info()
-        
+        # move time forward
         self._obs_index = [i+1 for i in self._obs_index]
         self._step_number += 1
-        terminated = self._step_number >= self._max_steps_const
+        obs = self._get_subsample()
+
+        # how much did the new portfolio earn
+        reward = self._get_reward(new_portfolio)
+
+        # store for next step
+        self.old_portfolio = new_portfolio
+        
+        # output data
+        info = self._get_info()
+        terminated = self._step_number >= self._max_steps_const -1
         truncated = False
+        # sanity
         self._assert_obs_shape(obs)
         return obs, reward, terminated, truncated, info
     
@@ -149,16 +159,17 @@ class AssetEnvironment(Env):
         """The rate of return for the time period"""
         mu = self._get_transaction_remainder_factor(new_portfolio)
         y = self._get_price_relative_vector()
-        reward = torch.log((1+mu) * (y * new_portfolio).sum(dim=1))
+        reward = torch.log(mu * (y * new_portfolio).sum(dim=1))
         return reward / self._max_steps_const
     
     def _get_transaction_remainder_factor(self, new_portfolio: torch.Tensor):
-        """How much it costs to transition from one portfolio to another portfolio"""
+        """The fractional cost to transition from one portfolio to another portfolio"""
         # TODO this comes from an iterative eq, this is just the initial value
         #   implement the rest
-        value = self._commission_rate_const * torch.sum(torch.abs(new_portfolio - self._portfolio))
-        assert 0 < value <=1
-        return value
+        lost_factor = self._commission_rate_const * torch.sum(torch.abs(new_portfolio - self.old_portfolio), dim=-1)
+        assert (0 < lost_factor).all()
+        assert (lost_factor <= 1).all()
+        return 1 - lost_factor
 
     def _get_price_relative_vector(self) -> torch.Tensor:
         """Data provided is close, high and low, normalise this data wrt the final close"""
@@ -210,8 +221,8 @@ class AssetEnvironment(Env):
     
     def _set_initial_portfolio(self):
         """Cash only"""
-        self._portfolio = torch.zeros(len(self._symbols_const)+1).float().to(DEVICE)
-        self._portfolio[0] = 1.0
+        self.old_portfolio = torch.zeros(len(self._symbols_const)+1).float().to(DEVICE)
+        self.old_portfolio[0] = 1.0
 
     def _get_subsample(self) -> torch.Tensor:
         """Get the n rows before the observation date

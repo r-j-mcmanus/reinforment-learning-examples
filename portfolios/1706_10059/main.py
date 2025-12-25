@@ -5,7 +5,7 @@ from actor import Actor
 import random
 import torch
 
-from constants import *
+from constants import DEVICE, CONSTANTS
 
 def set_global_seed(seed: int = 42):
     # Python
@@ -55,8 +55,6 @@ LSE_SYMBOLS = [
     'SHEL.L',   # Energy
     'AZN.L'     # Healthcare / Pharmaceuticals
 ]
-BATCH_SIZE = 200
-EPISODE_COUNT = 1000
 
 env = AssetEnvironment(symbols = SYMBOLS)
 # sets initial portfolio vec to (1,0,...,0) = w_0
@@ -65,11 +63,11 @@ total_rewards: list[float] = []
 
 actor= Actor(feature_dim=env.observation_space.shape[-1])
 
-for n in range(EPISODE_COUNT):
+for n in range(CONSTANTS.EPISODE_COUNT):
     # todo batch multiple sequences at once
-    obs, info = env.reset(options={'batch_size': BATCH_SIZE})
+    obs, info = env.reset(options={'batch_size': CONSTANTS.BATCH_SIZE})
 
-    portfolio = torch.zeros(BATCH_SIZE, len(SYMBOLS)+1).float().to(DEVICE)
+    portfolio = torch.zeros(CONSTANTS.BATCH_SIZE, len(SYMBOLS)+1).float().to(DEVICE)
     portfolio[:, 0] = 1 # initial portfolio is all cash
 
     rewards: list[torch.Tensor] = []

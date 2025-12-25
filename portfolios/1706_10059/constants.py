@@ -1,5 +1,13 @@
 from typing import Any
 import torch
+import pydantic
+from pydantic import BaseModel
+
+class _Constants(BaseModel):
+    BATCH_SIZE: int = 2
+    EPISODE_COUNT: int = 1000
+    INPUT_PERIOD_LEN: int = 50
+    MAX_STEPS: int = 30
 
 
 DEVICE = torch.device(
@@ -8,4 +16,4 @@ DEVICE = torch.device(
     "cpu"
 )
 
-# asserts on size of values that have to be true:
+CONSTANTS = _Constants()
