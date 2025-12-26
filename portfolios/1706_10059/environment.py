@@ -1,12 +1,18 @@
 import hashlib
 import random
+from contextlib import contextmanager
 from pathlib import Path
+import datetime
 from datetime import datetime as dt
 from datetime import timedelta
 
 import pandas as pd
 import numpy as np
 import torch
+
+import mplfinance as mpf
+import matplotlib.pyplot as plt
+
 
 from gymnasium import Env
 from gymnasium import spaces
@@ -17,7 +23,10 @@ from constants import DEVICE, CONSTANTS
 
 # look into Databento
 
-class AssetEnvironment(Env):
+TEMP = True
+INIT_OBS_INDEX = None
+
+class AssetTrainingEnvironment(Env):
     def __init__(self,
                  symbols: list[str],
                  start_date: dt = dt(year=2025, month=12, day=20) - timedelta(days=50),
@@ -35,6 +44,10 @@ class AssetEnvironment(Env):
         # init values
         self.old_portfolio: torch.Tensor = torch.zeros(1).float().to(DEVICE)
         self._set_initial_portfolio()
+        
+        #for rendering
+        self._render = False
+        self._past_portfolios = []
 
         # for sampling
         self._raw_data: pd.DataFrame = self.__init_get_raw_data(symbols, start_date, end_date, interval)
@@ -42,6 +55,7 @@ class AssetEnvironment(Env):
         self._symbol_data_on_device: torch.Tensor = self._push_data_to_torch() # in the shape (symbol, history, feature)
         self._data_time: torch.Tensor = self._push_times_to_torch()
         self._subsamples = torch.Tensor([])
+        self._str_to_hash: str = ''
 
         # for calculating reward
         self.old_portfolio = np.zeros(shape=len(self._symbols_const)+1, dtype='float32')
@@ -66,6 +80,11 @@ class AssetEnvironment(Env):
             dtype=np.float32
         )
 
+        self._print_info_on_raw_data()
+
+    def _print_info_on_raw_data(self):
+        print(f'Batch Size {CONSTANTS.BATCH_SIZE}, root(len(data)) {np.sqrt(len(self._raw_data))}')
+
     def _feature_eng(self) -> pd.DataFrame:
         # TODO daylight saving messes this up by an hour
         # can pass opening and closing time to not use min and max
@@ -83,11 +102,9 @@ class AssetEnvironment(Env):
         """
         Download the historic stock data
         """
-
-        # todo move this to device here and slice from the device rather than the df in the rest of the environment
-        str_to_hash = str((*symbols, start_date, end_date, interval))
-        input_hash = hashlib.sha224(str_to_hash.encode()).hexdigest()
-        raw_data_file_path = Path(f'asset_env_raw_data_{input_hash}.feather')
+        self._str_to_hash = str((*symbols, start_date, end_date, interval))
+        input_hash = hashlib.sha224(self._str_to_hash.encode()).hexdigest()
+        raw_data_file_path = Path(f'portfolios/1706_10059/data/ asset_env_raw_data_{input_hash}.feather')
         if raw_data_file_path.exists():
             print(f'Using saved data {raw_data_file_path}')
             raw_data = pd.read_feather(raw_data_file_path)
@@ -102,7 +119,7 @@ class AssetEnvironment(Env):
             raw_data.to_feather(raw_data_file_path)
         if raw_data.index[0].tz == None:
             raise Exception('No time zone!')
-        if raw_data.index[0].tz.zone != 'UTC':
+        if raw_data.index[0].tz != datetime.timezone.utc:
             raw_data.index = raw_data.index.tz_convert("UTC")
         return raw_data
     
@@ -145,7 +162,9 @@ class AssetEnvironment(Env):
         reward = self._get_reward(new_portfolio)
 
         # store for next step
-        self.old_portfolio = new_portfolio
+        if self._render:
+            self._past_portfolios.append(new_portfolio)
+            self.old_portfolio = new_portfolio
         
         # output data
         info = self._get_info()
@@ -193,6 +212,7 @@ class AssetEnvironment(Env):
         -------
         obs: Tensor - shape (Batch, History, Features, Symbols)
         """
+        global TEMP, INIT_OBS_INDEX
         self._step_number = 0
 
         batch_size = 1
@@ -203,16 +223,22 @@ class AssetEnvironment(Env):
             super().reset(seed=seed)
         
         self._set_initial_portfolio() # rest to cash only
+        self._past_portfolios = [self.old_portfolio]
 
         # get indices that have at least self._input_period_len_const entries behind them
-        self._obs_index = [
-                            i + self._input_period_len_const for i in 
-                            random.sample( # pick without replacement
-                                range(
-                                    len(self._raw_data) - self._input_period_len_const - self._max_steps_const
-                                ) # cannot pick so early that we dont have a history, nor late we dont have an episode 
-                                , batch_size)
-                            ]
+        if TEMP:
+            self._obs_index = [
+                                i + self._input_period_len_const for i in 
+                                random.sample( # pick without replacement
+                                    range(
+                                        len(self._raw_data) - self._input_period_len_const - self._max_steps_const
+                                    ) # cannot pick so early that we dont have a history, nor late we dont have an episode 
+                                    , batch_size)
+                                ]
+            INIT_OBS_INDEX = self._obs_index
+            TEMP = False
+        else:
+            self._obs_index = INIT_OBS_INDEX
         self._initial_obs_index = self._obs_index # to track how many steps have been taken
         obs = self._get_subsample() # get the data ending at _obs_index
         info = self._get_info() # get the info dict
@@ -255,9 +281,39 @@ class AssetEnvironment(Env):
 
         return out
     
+    @contextmanager
     def render(self, mode: str = 'human'):
-        raise NotImplementedError
-    
+        self._render = True
+        try:
+            yield self
+        finally:
+            self._render = False
+            self._make_plots()
+
+    def _make_plots(self):
+        df: pd.DataFrame = self._raw_data.set_index('Datetime').iloc[self._initial_obs_index[0]:self._initial_obs_index[0]+self._step_number+1]
+        df_port = pd.DataFrame([i.squeeze().detach().numpy() for i in self._past_portfolios])
+        df_port.index = df.index
+        df_port.columns = ['cash', *self._symbols_const]
+
+        for symbol in self._symbols_const:
+            ap = mpf.make_addplot(
+                df_port[symbol],
+                type="line",
+                color="blue",
+                width=1.5
+            )
+
+            mpf.plot(
+                df.xs(symbol, axis=1, level=1), 
+                type="candle", 
+                style="charles", 
+                volume=False,
+                addplot=ap,
+                savefig=f"portfolios/1706_10059/plots/{self._str_to_hash}/{symbol}.png"
+                )
+        a=1
+
     def _get_info(self) -> dict:
         return {}
 

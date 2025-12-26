@@ -1,5 +1,5 @@
 from pprint import pprint
-from environment import AssetEnvironment
+from environment import AssetTrainingEnvironment
 import numpy as np
 from actor import Actor
 import random
@@ -28,6 +28,7 @@ def set_global_seed(seed: int = 42):
 
     print(f"[Seed set to {seed}]")
 
+
 set_global_seed()
 
 # look into interactivebrokers when a real api is needed!
@@ -36,7 +37,7 @@ set_global_seed()
 # for ease use all symbols in the same exchange so the data is consistent amongst them
 
 # all in NASDAQ
-SYMBOLS = [
+SYMBOLS: list[str] = [
     'META', 
     'NFLX', 
     'AAPL', 
@@ -56,15 +57,52 @@ LSE_SYMBOLS = [
     'AZN.L'     # Healthcare / Pharmaceuticals
 ]
 
-env = AssetEnvironment(symbols = SYMBOLS)
-# sets initial portfolio vec to (1,0,...,0) = w_0
-# gives x_t where t=1
-total_rewards: list[float] = []
+def main(symbols: list[str]):
+    env = AssetTrainingEnvironment(symbols = symbols)
+    # sets initial portfolio vec to (1,0,...,0) = w_0
+    # gives x_t where t=1
+    total_rewards: list[float] = []
 
-actor= Actor(feature_dim=env.observation_space.shape[-1])
+    actor= Actor(feature_dim=env.observation_space.shape[-1])
 
-for n in range(CONSTANTS.EPISODE_COUNT):
-    # todo batch multiple sequences at once
+    for episode in range(CONSTANTS.EPISODE_COUNT):
+        # todo batch multiple sequences at once
+        total_rewards = batch_train(env, actor, total_rewards)
+
+        if episode % 10 == 0:
+            print(episode, total_rewards[-1])
+            render_current_actor(env, actor)
+
+    print('------------')
+    print('min        -', min(total_rewards))
+    print('max        -', max(total_rewards))
+    print('starting 5 -', total_rewards[:5])
+    print('ending 5   -', total_rewards[-5:])
+    print('------------')
+    a=1
+
+
+def render_current_actor(env: AssetTrainingEnvironment, actor: Actor):
+    with env.render():
+        portfolio = torch.zeros(1, len(SYMBOLS)+1).float().to(DEVICE)
+        portfolio[:, 0] = 1 # initial portfolio is all cash
+
+        obs, info = env.reset(options={'batch_size': 1})
+
+        rewards: list[torch.Tensor] = []
+        while True:
+            # the new portfolio we have decided to transition to w_t using the observation X_T and portfolio w_{t-1}
+            portfolio = actor.forward(obs, portfolio)
+
+            obs, reward, terminated,truncated, info= env.step(portfolio)
+            rewards.append(reward)
+
+            if terminated or truncated:
+                break
+
+
+
+def batch_train(env: AssetTrainingEnvironment, actor: Actor, total_rewards: list[float]):
     obs, info = env.reset(options={'batch_size': CONSTANTS.BATCH_SIZE})
 
     portfolio = torch.zeros(CONSTANTS.BATCH_SIZE, len(SYMBOLS)+1).float().to(DEVICE)
@@ -87,12 +125,8 @@ for n in range(CONSTANTS.EPISODE_COUNT):
     actor.optimizer.step()
     float_total_reward = float(total_reward.detach().numpy())
     total_rewards.append(float_total_reward)
-    if n % 10 == 0:
-        print(n, float_total_reward)
-print('------------')
-print('min        -', min(total_rewards))
-print('max        -', max(total_rewards))
-print('starting 5 -', total_rewards[:5])
-print('ending 5   -', total_rewards[-5:])
-print('------------')
-a=1
+    return total_rewards
+
+
+if __name__ == '__main__':
+    main(SYMBOLS)

@@ -9,3 +9,5 @@ gymnasium[mujoco]
 gymnasium[other]
 seaborn
 yfinance
+pydantic
+mplfinance
