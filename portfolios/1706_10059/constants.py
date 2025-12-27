@@ -4,7 +4,7 @@ import pydantic
 from pydantic import BaseModel
 
 class _Constants(BaseModel):
-    BATCH_SIZE: int = 1 #21
+    BATCH_SIZE: int = 21
     EPISODE_COUNT: int = 3_000
     INPUT_PERIOD_LEN: int = 50
     MAX_STEPS: int = 30

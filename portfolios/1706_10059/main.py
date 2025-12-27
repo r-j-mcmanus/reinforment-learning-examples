@@ -1,7 +1,7 @@
 from pprint import pprint
 from environment import AssetTrainingEnvironment
 import numpy as np
-from actor import Actor
+from actors.gnu_actor import GnuActor as Actor
 import random
 import torch
 
@@ -47,6 +47,9 @@ SYMBOLS: list[str] = [
     'QCOM',
     'INTC'
 ] 
+# SYMBOLS: list[str] = [
+#     'META'
+# ] 
 # all in london stock exchange
 LSE_SYMBOLS = [
     'RIO.L',    # Materials / Mining
@@ -68,9 +71,9 @@ def main(symbols: list[str]):
     for episode in range(CONSTANTS.EPISODE_COUNT):
         # todo batch multiple sequences at once
         total_rewards = batch_train(env, actor, total_rewards)
-
+        print('total_reward' , total_rewards[-1])
         if episode % 10 == 0:
-            print(episode, total_rewards[-1])
+            #print(episode, total_rewards[-1])
             render_current_actor(env, actor)
 
     print('------------')
@@ -80,46 +83,45 @@ def main(symbols: list[str]):
     print('ending 5   -', total_rewards[-5:])
     print('------------')
     a=1
-
+# env._raw_data.loc[env._obs_index].xs("AAPL", axis=1, level=1)#
 
 def render_current_actor(env: AssetTrainingEnvironment, actor: Actor):
     with env.render():
         portfolio = torch.zeros(1, len(SYMBOLS)+1).float().to(DEVICE)
         portfolio[:, 0] = 1 # initial portfolio is all cash
 
-        obs, info = env.reset(options={'batch_size': 1})
+        obs, info = env.reset(options={'batch_size': 1, 'obs_index':[100]})
+        portfolio: torch.Tensor = actor(obs, portfolio) # action based on current observation
 
-        rewards: list[torch.Tensor] = []
         while True:
             # the new portfolio we have decided to transition to w_t using the observation X_T and portfolio w_{t-1}
-            portfolio = actor.forward(obs, portfolio)
-
-            obs, reward, terminated,truncated, info= env.step(portfolio)
-            rewards.append(reward)
-
+            obs, reward, terminated,truncated, info= env.step(portfolio) # how the env changes with our action
+            portfolio: torch.Tensor = actor(obs, portfolio) # what action we take given the new environment
             if terminated or truncated:
                 break
 
 
+def batch_train(env: AssetTrainingEnvironment, 
+                actor: Actor, 
+                total_rewards: list[float],
+                batch_size =  CONSTANTS.BATCH_SIZE
+                ):
+    # initial portfolio is all cash
+    portfolio = torch.zeros(batch_size, len(SYMBOLS)+1).float().to(DEVICE)
+    portfolio[:, 0] = 1
 
-def batch_train(env: AssetTrainingEnvironment, actor: Actor, total_rewards: list[float]):
-    obs, info = env.reset(options={'batch_size': CONSTANTS.BATCH_SIZE})
-
-    portfolio = torch.zeros(CONSTANTS.BATCH_SIZE, len(SYMBOLS)+1).float().to(DEVICE)
-    portfolio[:, 0] = 1 # initial portfolio is all cash
+    obs, info = env.reset(options={'batch_size': batch_size})
 
     rewards: list[torch.Tensor] = []
     while True:
+        portfolio: torch.Tensor = actor(obs, portfolio) # action based on current observation
         # the new portfolio we have decided to transition to w_t using the observation X_T and portfolio w_{t-1}
-        portfolio = actor.forward(obs, portfolio)
-
-        obs, reward, terminated,truncated, info= env.step(portfolio)
+        obs, reward, terminated,truncated, info= env.step(portfolio) # how the env changes with our action
         rewards.append(reward)
-
         if terminated or truncated:
             break
 
-    total_reward: torch.Tensor = sum(rewards).mean()
+    total_reward: torch.Tensor = torch.stack(rewards).sum(dim=0).mean()
     actor.optimizer.zero_grad()
     (-total_reward).backward() # to ascend 
     actor.optimizer.step()
