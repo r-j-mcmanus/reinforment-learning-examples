@@ -4,10 +4,13 @@ from collections import deque
 
 import torch
 import torch.optim as optim
+from torch.distributions import OneHotCategorical, kl_divergence
+
 import pandas as pd
 
 from rssm import RSSM
 from state import State
+from categorical_transition import CategoricalState
 from episode_memory import EpisodeMemory
 
 from constants import *
@@ -23,8 +26,6 @@ def train_rssm(rssm: RSSM, episode_memory: EpisodeMemory, episode: int, epoch: i
     replay_memory: ReplayMemory
     episode: int - for logging
     """
-    # Instantiate model
-
     horizon_length = Constants.Behaviors.imagination_horizon
     sequence_length = Constants.World.sequence_length
     batch_size = Constants.World.batch_size
@@ -61,19 +62,21 @@ def train_rssm(rssm: RSSM, episode_memory: EpisodeMemory, episode: int, epoch: i
 
         # print('obs.shape', obs.shape)
         # s_{t|t} - state at time t conditioned on observations up to time t
-        representation_state: State = rssm.representation(obs, h_t) # predict what the state should be given the observation and the hidden state
+        representation_state: CategoricalState = rssm.representation(obs, h_t) # predict what the state should be given the observation and the hidden state
 
         if latent_overshooting:
             kl_loss = get_kl_latent_overshooting_loss(past_rollouts, rssm, representation_state)
             kl_loss = beta * kl_loss / Constants.Behaviors.imagination_horizon
         else:
-            kl_loss = beta * get_kl_loss(rssm, representation_state, h_t)
+            # kl_loss = beta * get_kl_loss(rssm, representation_state, h_t)
+            # kl_loss = beta * get_categorical_kl_loss(representation_state, rssm.transition.forward(h_t)).mean()
+            kl_loss = get_categorical_kl_loss(representation_state, rssm.transition.forward(h_t)).mean()
 
         # Reconstruction loss
-        reconstruction_loss = rssm.observation.loss(h_t, representation_state.mean, obs)
+        reconstruction_loss = rssm.observation.loss(h_t, representation_state.sample, obs)
 
         # reward loss
-        reward_loss = rssm.reward.loss(h_t, representation_state.mean, reward)
+        reward_loss = rssm.reward.loss(h_t, representation_state.sample, reward)
 
         loss += reconstruction_loss + reward_loss + kl_loss
         
@@ -86,9 +89,6 @@ def train_rssm(rssm: RSSM, episode_memory: EpisodeMemory, episode: int, epoch: i
 
         # h for the next loop
         h_t = rssm.deterministic_step(representation_state.sample, action, h_t)
-
-        #row[f'reconstruction_loss_{t}'] = float(reconstruction_loss.item())
-        #row[f'reward_loss_{t}'] = float(reward_loss.item())
 
         kl_loss_total += kl_loss.item()
         reconstruction_loss_total += reconstruction_loss.item()
@@ -115,7 +115,64 @@ def get_kl_loss(rssm: RSSM, representation_state: State, h: torch.Tensor) -> tor
     return rssm.divergence_from_states(representation_state, rssm.transition.forward(h))
 
 
-def get_kl_latent_overshooting_loss(past_rollouts, rssm, representation_state) -> torch.Tensor:
+def get_categorical_kl_loss(
+        posterior_state: CategoricalState,
+        prior_state: CategoricalState,
+        num_latents: int = Constants.World.latent_state_dimension,
+        num_categories: int = Constants.World.discrete_latent_classes,
+        kl_balance_lambda: float = 0.8, # lambda from the paper (e.g., 0.8)
+    ) -> torch.Tensor:
+    
+    # 1. Reshape logits (Same as before)
+    flat_logits_post = posterior_state.logits
+    flat_logits_prior = prior_state.logits
+    batch_shape = flat_logits_post.shape[:-1]
+    
+    logits_post = flat_logits_post.view(*batch_shape, num_latents, num_categories)
+    logits_prior = flat_logits_prior.view(*batch_shape, num_latents, num_categories)
+    
+    # 2. Create the distributions
+    dist_post = OneHotCategorical(logits=logits_post)
+    dist_prior = OneHotCategorical(logits=logits_prior)
+    
+    # --- KL Balancing Logic (The new part) ---
+    
+    # Total KL divergence (used for calculating the maximum constraint)
+    # Shape: [Batch_Size, N]
+    kl_per_latent_total = kl_divergence(dist_post, dist_prior)
+    
+    # 3. Prior-Following Term: D_KL(P || stop_grad(Q))
+    # Stops the gradient from flowing into the prior (Q)
+    # The 'loc' attribute for OneHotCategorical is the logits tensor.
+    # The gradient is stopped on the PRIOR logits.
+    dist_prior_stopped = OneHotCategorical(
+        logits=dist_prior.logits.detach()
+    )
+    kl_prior_follow = kl_divergence(dist_post, dist_prior_stopped)
+    
+    # 4. Posterior-Following Term: D_KL(stop_grad(P) || Q)
+    # Stops the gradient from flowing into the posterior (P)
+    # The gradient is stopped on the POSTERIOR logits.
+    dist_post_stopped = OneHotCategorical(
+        logits=dist_post.logits.detach()
+    )
+    kl_posterior_follow = kl_divergence(dist_post_stopped, dist_prior)
+    
+    # 5. KL Balancing (torch.max)
+    # The final KL divergence for each latent variable N is:
+    # max(lambda * KL_total, KL_prior_follow) + KL_posterior_follow
+    # where KL_total is D_KL(P || Q)
+    kl_balanced_per_latent = (
+        torch.max(
+            kl_balance_lambda * kl_per_latent_total, # The target/constraint
+            kl_prior_follow                          # The term that pulls P to Q
+        )
+        + kl_posterior_follow                        # The term that pulls Q to P
+    )
+    
+    return kl_balanced_per_latent
+
+def get_kl_latent_overshooting_loss(past_rollouts, rssm: RSSM, representation_state) -> torch.Tensor:
     kl_loss = torch.zeros([1])
     # Latent overshooting:
     # find kl for same step but where the obs conditioned on ends at different times

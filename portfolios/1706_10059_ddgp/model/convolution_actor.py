@@ -6,12 +6,12 @@ import torch.optim as optim
 
 from constants import *
 
-class ConvolutionActor(nn.Module):
+class ConvolutionActorNetwork(nn.Module):
     def __init__(self,
-                 feature_dim: int, 
+                 feature_dim: int,
+                 history_len: int,
                  *,
                  kernel_size_1: int = 3, 
-                 kernel_size_2: int = 3, 
                  hidden1: int = 2,
                  hidden2: int = 20,
                  lr = 0.005):
@@ -24,10 +24,11 @@ class ConvolutionActor(nn.Module):
             device=DEVICE
         )
 
+        # so we can learn temporal weighting, fully connected layer 
         self.conv2 = torch.nn.Conv1d(
             in_channels=hidden1,
             out_channels=hidden2,
-            kernel_size=kernel_size_2, 
+            kernel_size=history_len-2, 
             device=DEVICE
         )
 
@@ -62,10 +63,9 @@ class ConvolutionActor(nn.Module):
         # Conv over time per asset
         # pass time series through the conv networks
         x = self._leakyReLU(self.conv1(x)) # shape (symbol * batch, hidden1, history - 2)
-        x = self.conv2(x) # shape (symbol * batch, hidden2, history - 4)
-
         # squish all data along the time dimension
-        x = self._leakyReLU(self.pool(x).squeeze(-1)) # shape (symbol * batch, hidden2)
+        x = self.conv2(x).squeeze(-1) # shape (symbol * batch, hidden2)
+        x = self._leakyReLU(x) # shape (symbol * batch, hidden2)
 
         # concat previous weights (exclude cash)
         x = torch.concat([x, w_tm1[:,1:].reshape(-1).unsqueeze(dim=1)], dim=-1) # shape (symbol * batch, hidden2 + 1)

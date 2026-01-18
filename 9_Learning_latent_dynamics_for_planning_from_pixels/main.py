@@ -59,7 +59,7 @@ def main():
     else:
         rssm, df_rssm = train_rssm(rssm, memory, episode=0, epoch=0, df=df_rssm) # initial training on warm up data
 
-    ddpg = DDPG(action_size, 1)
+    ddpg = DDPG(rssm.transition.state_size, action_size, 1)
 
     for episode in range(1, num_episodes+1):
 
@@ -73,15 +73,13 @@ def main():
             print(f'Training on episode {episode}')
 
             for epoch in range(Constants.World.epoch_count):
-                # rssm, df_rssm = train_rssm(rssm, memory, episode, epoch, df_rssm)
+                rssm, df_rssm = train_rssm(rssm, memory, episode, epoch, df_rssm)
                 
                 # no point training actor until we start caring about the kl divergence
-                # if len(df_rssm) > 500:
+                if len(df_rssm) > 500:
                     df_ll = train_ddpg(rssm, memory, ddpg, episode, epoch, df_ll)
             plot_rssm_data(df_rssm, 0)
             plot_ll_data(df_ll, 0)
-
-
     # Close the environment
     env.close()
 

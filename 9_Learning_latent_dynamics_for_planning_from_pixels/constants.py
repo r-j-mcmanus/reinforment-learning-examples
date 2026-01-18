@@ -12,7 +12,7 @@ class Constants():
         sequence_length = 2**4
         latent_state_dimension = 2**5 # the dimension of the latent space we map to with the stochastic world model
         hidden_state_dimension = 2**5 # the dimension of the hidden space we map to with the deterministic world model
-        discrete_latent_classes = 2**5
+        discrete_latent_classes = 2**4
         epoch_count =  16 # 2**5 # 600
         kl_loss_scale = 0.1
         kl_balancing = 0.8

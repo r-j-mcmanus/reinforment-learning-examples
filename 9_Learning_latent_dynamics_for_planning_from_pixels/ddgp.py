@@ -39,8 +39,11 @@ class Actor(nn.Module):
         if deterministic:
             z = mean
         else:
-            # Reparameterization trick
-            z = normal.rsample() if reparameterize else normal.sample()
+            if reparameterize:
+                # Reparameterization trick
+                z = normal.rsample()  
+            else: 
+                z = normal.sample()
 
         # Squash and scale
         action = self.max_action * torch.tanh(z)
@@ -73,12 +76,11 @@ class Critic(nn.Module):
         return self.l3(x).squeeze(dim=-1)
 
 class DDPG:
-    def __init__(self, action_dim, max_action,
+    def __init__(self, state_dim, action_dim, max_action,
                 c_lr=Constants.Behaviors.critic_learning_rate, 
                 a_lr=Constants.Behaviors.actor_learning_rate, 
                 gamma=Constants.Behaviors.discount_factor, 
-                tau=Constants.Behaviors.tau, 
-                state_dim = Constants.World.latent_state_dimension):
+                tau=Constants.Behaviors.tau):
         
         self.actor = Actor(state_dim, action_dim, max_action)
         self.critic = Critic(state_dim)
@@ -102,7 +104,7 @@ class DDPG:
     def select_action(self, state, reparameterize=False) -> Tensor:
         if len(state.shape) == 1:
             state = torch.FloatTensor(state.reshape(1, -1))
-        action, log_prob, normal = self.actor(state, reparameterize=reparameterize)
+        action, log_prob, normal = self.actor.forward(state, reparameterize=reparameterize)
         return action.detach()
 
     def train(self, episode_memory: EpisodeMemory, rssm: RSSM, df: pd.DataFrame, batch_size: int = Constants.Behaviors.trajectory_count):

@@ -32,14 +32,14 @@ def run(env: Env):
 
     memory = ReplayMemory(10_000)
 
-    stabalising_critic_net = StabilisingCriticNet(n_observations, n_actions)
+    stabilising_critic_net = StabilisingCriticNet(n_observations, n_actions)
     target_critic_net = TargetCriticNet(n_observations, n_actions)
-    target_critic_net.load_state_dict(stabalising_critic_net.state_dict()) # insure initially equal
+    target_critic_net.load_state_dict(stabilising_critic_net.state_dict()) # insure initially equal
 
-    # as the action space is continuouse we must use a policy directly and not argmax(Q)
-    stabalising_policy_net = StabilisingPolicyNet(n_observations, n_actions) 
+    # as the action space is continuous we must use a policy directly and not argmax(Q)
+    stabilising_policy_net = StabilisingPolicyNet(n_observations, n_actions) 
     target_policy_net = TargetPolicyNet(n_observations, n_actions)
-    target_policy_net.load_state_dict(stabalising_policy_net.state_dict()) # insure initially equal
+    target_policy_net.load_state_dict(stabilising_policy_net.state_dict()) # insure initially equal
 
     # tracking how long the episode lasted
     episode_durations = []
@@ -56,7 +56,7 @@ def run(env: Env):
 
         for step in count():
             assert isinstance(state, Tensor)
-            action = stabalising_policy_net.noisy_actions(state, env)
+            action = stabilising_policy_net.noisy_actions(state, env)
 
             observation, reward, terminated, truncated, _ = env.step([action.item()]) # gymnasium response to the action
            
@@ -88,31 +88,14 @@ def run(env: Env):
 
             # Perform one step of the optimization
             apply_learning_step(memory, step,
-                                stabalising_critic_net, target_critic_net,
-                                stabalising_policy_net, target_policy_net)
+                                stabilising_critic_net, target_critic_net,
+                                stabilising_policy_net, target_policy_net)
 
             if done:
                 print(f'episode {i_episode} step {step}')
                 episode_durations.append(step + 1)
-                plot(observations, rewards, i_episode)
                 break
     print(episode_durations)
-
-
-def plot(observations: list[list[float]], rewards: list[float], episode: int):
-    import seaborn as sns
-    import pandas as pd
-    import matplotlib.pyplot as plt
-
-    df = pd.DataFrame(observations, columns=['y', 'hue'])
-    df['x'] = range(len(df))
-    sns.scatterplot(data=df, x='x', y='y', hue='hue')
-    plt.savefig(f'fig/td3_observations_ep_{episode}')
-
-    df = pd.DataFrame(rewards, columns=['y'])
-    df['x'] = range(len(df))
-    sns.scatterplot(data=df, x='x', y='y')
-    plt.savefig(f'fig/td3_rewards_ep_{episode}')
 
 
 

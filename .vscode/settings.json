@@ -3,8 +3,11 @@
         "diag"
     ],
     "cSpell.words": [
+        "cudnn",
+        "Databento",
         "ddgp",
         "ddpg",
+        "idxs",
         "isnt",
         "minibatch",
         "outputed",

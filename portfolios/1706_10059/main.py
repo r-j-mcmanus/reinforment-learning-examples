@@ -1,7 +1,8 @@
 from pprint import pprint
 from environment import AssetTrainingEnvironment
 import numpy as np
-from actors.gnu_actor import GnuActor as Actor
+# from actors.gnu_actor import GnuActor as Actor
+from actors.convolution_actor import ConvolutionActor as Actor
 import random
 import torch
 
@@ -69,11 +70,8 @@ def main(symbols: list[str]):
     actor= Actor(feature_dim=env.observation_space.shape[-1])
 
     for episode in range(CONSTANTS.EPISODE_COUNT):
-        # todo batch multiple sequences at once
         total_rewards = batch_train(env, actor, total_rewards)
-        print('total_reward' , total_rewards[-1])
-        if episode % 10 == 0:
-            #print(episode, total_rewards[-1])
+        if episode % 10 ==0:
             render_current_actor(env, actor)
 
     print('------------')
@@ -83,7 +81,7 @@ def main(symbols: list[str]):
     print('ending 5   -', total_rewards[-5:])
     print('------------')
     a=1
-# env._raw_data.loc[env._obs_index].xs("AAPL", axis=1, level=1)#
+
 
 def render_current_actor(env: AssetTrainingEnvironment, actor: Actor):
     with env.render():
@@ -104,6 +102,7 @@ def render_current_actor(env: AssetTrainingEnvironment, actor: Actor):
 def batch_train(env: AssetTrainingEnvironment, 
                 actor: Actor, 
                 total_rewards: list[float],
+                log_reward = True,
                 batch_size =  CONSTANTS.BATCH_SIZE
                 ):
     # initial portfolio is all cash
@@ -127,6 +126,8 @@ def batch_train(env: AssetTrainingEnvironment,
     actor.optimizer.step()
     float_total_reward = float(total_reward.detach().numpy())
     total_rewards.append(float_total_reward)
+    if log_reward:
+        print('total_reward' , float_total_reward)
     return total_rewards
 
 

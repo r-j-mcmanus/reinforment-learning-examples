@@ -13,14 +13,14 @@ def train_critic(rssm: RSSM, ddpg:DDPG, latent_starts: Tensor, obs: Tensor, acti
     
     # detach world model results as we dont use their trees
     with torch.no_grad():
-        # where we start dreaming for the traj count of dreams
+        # where we start dreaming for the trajectory count of dreams
         z_latent_start, h_latent_start = rollout_transitions(rssm, latent_starts, obs, actions)
         # the im horizon of future states following the target actor policy
-        dreamt_z, dreamt_h = dream_sequence(rssm, ddpg, z_latent_start, h_latent_start)
+        dreamt_z, dreamt_h = dream_sequence(rssm, ddpg, z_latent_start, h_latent_start, actor_reparameterize=False)
         rewards, _ = rssm.reward.forward(dreamt_h, dreamt_z)
         target_values = ddpg.critic_target.forward(dreamt_z)
 
-    # we use the gradients of L_targets when finding the critic loss function
+    # we dont use the gradients of L_targets when finding the critic loss function
     with torch.no_grad():
         # the target values for the dreamt rollout the target network given dreamt rewards the actor gives rise to
         L_targets = compute_lambda_targets(rewards, target_values)
@@ -49,15 +49,17 @@ def train_actor(rssm: RSSM, ddpg:DDPG, latent_starts: Tensor, obs: Tensor, actio
     z_latent_start, h_latent_start = rollout_transitions(rssm, latent_starts, obs, actions)
     
     # the im horizon of future states following the target actor policy
-    dreamt_z, dreamt_h = dream_sequence(rssm, ddpg, z_latent_start, h_latent_start)
+    dreamt_z, dreamt_h = dream_sequence(rssm, ddpg, z_latent_start, h_latent_start, actor_reparameterize=True)
     dreamt_rewards, _ = rssm.reward.forward(dreamt_h, dreamt_z)
     
-
     # we use the last target when making the lambda target, but we use the start target when using loss
     target_values: Tensor = ddpg.critic_target(dreamt_z)
     # see eq.4 2010.02193 for lambda def, basically for each t in horizon, take the weighted mean of the critic reward and the state's reward 
     L_targets = compute_lambda_targets(dreamt_rewards, target_values)
-    target_values = torch.concat([ddpg.critic_target.forward(z_latent_start).unsqueeze(dim=0), target_values[:-1]])
+    target_values = torch.concat([
+        ddpg.critic.forward(z_latent_start).unsqueeze(dim=0), 
+        ddpg.critic(dreamt_z[:-1])
+    ])
     action_weight = (L_targets - target_values).detach()
 
     # reinforce_loss
@@ -66,7 +68,8 @@ def train_actor(rssm: RSSM, ddpg:DDPG, latent_starts: Tensor, obs: Tensor, actio
     reinforce_loss = -rho * (log_prob_sf.sum(-1) * action_weight).mean()
     
     # reparam_loss
-    reparam_loss = -(1-rho) * (L_targets.mean())
+    # From backpropagating L_targets
+    reparam_loss = - (1-rho) * (L_targets.mean())
 
     # entropy loss
     entropy_loss = -Constants.Behaviors.actor_entropy_loss_scale * dist_sf.entropy().sum(dim=-1).mean()
@@ -189,7 +192,7 @@ def compute_lambda_targets(rewards: Tensor, target_values: Tensor,
     for t in range(T - 2, -1, -1):
         # V_t = r_t + gamma * ((1 - lam) * v_{t+1} + lam * V_{t+1}) 
         v_lambda_t = rewards[t] + gamma * (
-            (1.0 - lam) * target_values[t + 1] +
+            (1.0 - lam) * target_values[t] +
             lam * next_lambda_target
         )
         lambda_returns[t] = v_lambda_t
@@ -198,7 +201,7 @@ def compute_lambda_targets(rewards: Tensor, target_values: Tensor,
     return lambda_returns
 
 
-def dream_sequence(rssm: RSSM, ddgp: DDPG, z_latent_start: Tensor, h_latent_start: Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+def dream_sequence(rssm: RSSM, ddgp: DDPG, z_latent_start: Tensor, h_latent_start: Tensor, actor_reparameterize: bool) -> tuple[torch.Tensor, torch.Tensor]:
     """Imagination MDP: 
     Sample from the states used during the rssm training for z_0 and h_0. 
     Returns a sequence of states z_{1:H} outputed by the transition predictor ~ p(z_t | z_{t-1}, a_{t-1})
@@ -211,6 +214,7 @@ def dream_sequence(rssm: RSSM, ddgp: DDPG, z_latent_start: Tensor, h_latent_star
     z_latent_start: Tensor with shape (trajectory count, latent sate dimension)
     h_latent_start: Tensor with shape (trajectory count, hidden sate dimension)
     target: in the dreamt sequence, do we use the target network for picking actions
+    actor_reparameterize: sample or rsample from the action distribution
 
     Returns
     -------
@@ -221,10 +225,10 @@ def dream_sequence(rssm: RSSM, ddgp: DDPG, z_latent_start: Tensor, h_latent_star
 
     with rssm.freeze_module():
         # let the actor explore the latent space
-        z = z_latent_start.detach()
-        h = h_latent_start.detach()
+        z = z_latent_start
+        h = h_latent_start
         for _ in range(Constants.Behaviors.imagination_horizon):
-            action = ddgp.select_action(z)
+            action = ddgp.select_action(z, reparameterize=actor_reparameterize)
             h = rssm.deterministic_step(z, action, h)
             z = rssm.transition.forward(h).sample # transition returns a State where the attribute sample is rsample 
             dreamt_z.append(z)

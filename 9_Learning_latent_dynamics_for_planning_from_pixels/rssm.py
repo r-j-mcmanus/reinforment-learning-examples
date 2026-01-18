@@ -12,6 +12,8 @@ from transition import Transition
 from posterior import Posterior
 from decoder import Decoder
 
+from categorical_transition import CategoricalState, CategoricalRepresentation, CategoricalTransition
+
 from collections import deque 
 from constants import *
 
@@ -56,6 +58,27 @@ class RSSM(nn.Module):
 
         hidden_state_dimension = Constants.World.hidden_state_dimension
 
+
+        # Transition network
+        # given the hidden state, what would the latent state be
+        # self.transition = Transition()
+        self.transition = CategoricalTransition(hidden_state_dimension)
+
+        # Posterior network
+        # given the hidden state and the observation, what would the latent state be
+        # self.representation = Posterior(self.obs_size)
+        self.representation = CategoricalRepresentation(hidden_state_dimension, self.obs_size)
+
+        # back to "RL components" networks
+        decoder_input_size = hidden_state_dimension + self.representation.state_size
+        # predicts the observation given the hidden state and the latent state
+        # basically the decoder to the representation models encoder when considered as a VAE
+        self.observation = Decoder(decoder_input_size, self.obs_size) 
+        # predicts the reward given the hidden state and the latent state
+        self.reward = Decoder(decoder_input_size, 1)
+        # predicts the discount given the hidden state and the latent state
+        self.discount = Decoder(decoder_input_size, 1)
+
         # deterministic network
         # 1811.04551 uses rnn, but later dreamer models (2010.02193) use GRU RNNs (1406.1078)
         # Outline:
@@ -68,33 +91,16 @@ class RSSM(nn.Module):
         #       h = (1 - z) * h_candidate + z * h  -- mix old with new directly
         # we use a single layer determanistic model and allow for complications in the state model.
         # This is what fundamentally drives the prediction of the next state given then current state and action
-        self._gru = nn.GRU(state_size + action_size, 
-                           hidden_state_dimension, 
-                           device=DEVICE)
+        self.gru = nn.GRU(self.representation.state_size + action_size, 
+                            hidden_state_dimension, 
+                            device=DEVICE)
         # see 1511.06464 and 1312.6120, basically repeated use causes eigenvalues to explode if not unitary
-        for name, param in self._gru .named_parameters():
+        for name, param in self.gru .named_parameters():
             if "weight" in name:
                 nn.init.orthogonal_(param)
             elif "bias" in name:
                 nn.init.zeros_(param)
 
-        # Transition network
-        # given the hidden state, what would the latent state be
-        self.transition = Transition()
-
-        # Posterior network
-        # given the hidden state and the observation, what would the latent state be
-        self.representation = Posterior(self.obs_size)
-
-        # back to "RL components" networks
-        decoder_input_size = hidden_state_dimension + state_size
-        # predicts the observation given the hidden state and the latent state
-        # basically the decoder to the representation models encoder when considered as a VAE
-        self.observation = Decoder(decoder_input_size, self.obs_size) 
-        # predicts the reward given the hidden state and the latent state
-        self.reward = Decoder(decoder_input_size, 1)
-        # predicts the discount given the hidden state and the latent state
-        self.discount = Decoder(decoder_input_size, 1)
 
         # all these networks are jointly optimised
         self.optimizer = optim.AdamW(self.parameters(), lr=1e-3)
@@ -235,7 +241,7 @@ class RSSM(nn.Module):
             Tensor: next deterministic hidden state (batch_size, rnn_hidden_size).
         """
         inputs = torch.cat([prev_state, prev_action], dim=-1)  # (batch_size, state_size + action_size)
-        _, h = self._gru(inputs.unsqueeze(dim=0), h.unsqueeze(dim=0)) 
+        _, h = self.gru(inputs.unsqueeze(dim=0), h.unsqueeze(dim=0)) 
         return h.squeeze(0)
     
     def observation_reconstruction_error(self, posterior_state: State, obs: Tensor, h: Tensor):

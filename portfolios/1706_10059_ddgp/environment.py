@@ -1,5 +1,8 @@
 import hashlib
 import random
+import os
+from pathlib import Path
+from collections import deque
 from contextlib import contextmanager
 from operator import mul
 from functools import reduce
@@ -29,9 +32,95 @@ from constants import DEVICE, CONSTANTS
 import matplotlib
 matplotlib.use("Agg")
 
+
+class Sphere(spaces.Box):
+    """Normalised action vectors of length one"""
+    def sample(self):
+        # Dirichlet produces positive vectors summing to 1
+        alpha = np.ones(self.shape[0], dtype=np.float32)
+        return np.random.dirichlet(alpha).astype(self.dtype) * self.high
+
+
+class EnvRenderer:
+    def __init__(self, env, history_len: int | None):
+        # in cpp terms, treat env as a friend
+        self._env = env
+        self._plot_dir = 'portfolios/1706_10059_ddgp/plots/'
+        plot_path = Path(self._plot_dir)
+        if not plot_path.exists():
+            os.mkdir(plot_path)
+        self._history_len = history_len
+        if history_len is None:
+            self._past_portfolios = []
+            self._rewards = []
+            self._portfolio_change = []
+        elif isinstance(history_len, int):
+            self._past_portfolios = deque([], maxlen=history_len)
+            self._rewards = deque([], maxlen=history_len)
+            self._portfolio_change = deque([], maxlen=history_len)
+
+    def _add(self, portfolio, reward, portfolio_change):
+        self._past_portfolios.append(portfolio)
+        self._rewards.append(reward)
+        self._portfolio_change.append(portfolio_change)
+
+    def update_plots(self, portfolio, reward, portfolio_change):
+        self._add(portfolio, reward, portfolio_change)
+        lower_bound = max(self._env._obs_index-self._history_len, self._env._initial_obs_index)
+        df = self._env._raw_data.set_index('Datetime').iloc[lower_bound: self._env._obs_index]
+        self._make_symbol_plots(df)
+        self._make_portfolio_factor_plot(df)
+        self._make_reward_plot(df)
+
+    def _make_symbol_plots(self, df: pd.DataFrame):
+        df_port = pd.DataFrame([i for i in self._past_portfolios])
+        df_port.index = df.index
+        df_port.columns = ['cash', *self._env._symbols_const]
+
+        for symbol in self._env._symbols_const:
+            ap = mpf.make_addplot(
+                df_port[symbol],
+                type="line",
+                color="blue",
+                width=1.5
+            )
+
+            mpf.plot(
+                df.xs(symbol, axis=1, level=1), 
+                type="candle", 
+                style="charles", 
+                volume=False,
+                addplot=ap,
+                savefig=f"{self._plot_dir}/{symbol}.png"
+                )
+            plt.close()
+
+    def _make_portfolio_factor_plot(self,  df: pd.DataFrame):
+        portfolio_factors = []
+        portfolio_factor = 1
+        for i in range(len(self._portfolio_change)):
+            portfolio_factor *= self._portfolio_change[i]
+            portfolio_factors.append(portfolio_factor)
+        ds_portfolio_factor = pd.Series(portfolio_factors)
+        ds_portfolio_factor.index = df.index
+        ax = ds_portfolio_factor.plot(title='Portfolio ratio')
+        fig = ax.get_figure()
+        fig.savefig(f"{self._plot_dir}/portfolio_factor.png", dpi=150, bbox_inches="tight")
+        plt.close()
+
+    def _make_reward_plot(self, df: pd.DataFrame):
+        df_reward = pd.Series(self._rewards)
+        df_reward.index = df.index
+        ax = df_reward.plot(title="Reward Over Time")
+        fig = ax.get_figure()
+        fig.savefig(f"{self._plot_dir}/reward_plot.png", dpi=150, bbox_inches="tight")
+        plt.close()
+
+
 class AssetTrainingEnvironment(Env):
     def __init__(self,
                  symbols: list[str],
+                 history_len: int,
                  start_date: dt = dt(year=2025, month=12, day=20) - timedelta(days=50),
                  end_date: dt = dt(year=2025, month=12, day=20),
                  interval: str = '30m',
@@ -40,19 +129,16 @@ class AssetTrainingEnvironment(Env):
         
         super().__init__()
         # consts
-        self._input_period_len_const = CONSTANTS.INPUT_PERIOD_LEN
+        self._sample_history_len = history_len
         self._symbols_const = symbols
-        self._max_steps_const = CONSTANTS.MAX_STEPS
         self._commission_rate_const = commission_rate
         # init values
         self.old_portfolio: torch.Tensor = torch.zeros(1).float().to(DEVICE)
         self._set_initial_portfolio()
         
         #for rendering
+        self._renderer = EnvRenderer(self, history_len=20)
         self._render = False
-        self._past_portfolios = []
-        self._rewards = []
-        self._portfolio_change = []
 
         # for sampling
         self._raw_data: pd.DataFrame = self.__init_get_raw_data(symbols, start_date, end_date, interval)
@@ -67,11 +153,11 @@ class AssetTrainingEnvironment(Env):
         self.old_portfolio[0] = 1.0
 
         # for tracking obs location
-        self._obs_index: list[int] = [0]
-        self._initial_obs_index: list[int] = [0]
-        self._step_number = 0
+        self._obs_index: int = 0
+        self._initial_obs_index: int = 0
+        self._step_number: int = 0
 
-        self.action_space = spaces.Box(
+        self.action_space = Sphere(
             low=0.0,
             high=1.0,
             shape=(len(symbols) + 1,),
@@ -81,7 +167,7 @@ class AssetTrainingEnvironment(Env):
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
-            shape=(len(symbols), CONSTANTS.INPUT_PERIOD_LEN, 3), # features: close, high, low, hour
+            shape=(len(symbols), history_len, 3), # features: close, high, low, hour
             dtype=np.float32
         )
 
@@ -142,53 +228,56 @@ class AssetTrainingEnvironment(Env):
         f = torch.from_numpy(symbol_data).float().to(DEVICE)
         return f
         # normalised time since open as feature
-        t = torch.from_numpy(df['Hour'].values).float().to(DEVICE)[None, :, None].expand(8, 449, 1)
-        return torch.cat([f, t], dim=-1).float().to(DEVICE)
+        # t = torch.from_numpy(df['Hour'].values).float().to(DEVICE)[None, :, None].expand(8, 449, 1)
+        # return torch.cat([f, t], dim=-1).float().to(DEVICE)
 
     def step(self, action: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, bool, bool, dict]:
         """
         1. Move to the next datapoint in the stock data 
-        2. Calculate the rewards which is the return on the portfolio for this time step and 
+        2. Calculate the rewards which is the return on the portfolio (action) for this time step and 
            minus the cost of changing the portfolio from the old
         """
-        assert torch.isclose(action.sum(dim=-1), torch.tensor(1.0), atol=1e-4).all(), "portfolio is not normalised"
+        assert torch.isclose(action.sum(), torch.tensor(1.0), atol=1e-4).all(), "portfolio is not normalised"
         
         # get portfolio
         portfolio = action
 
         # move time forward
-        self._obs_index = [i+1 for i in self._obs_index]
+        self._obs_index += 1
         self._step_number += 1
         obs = self._get_obs()
 
         # how much did the new portfolio earn
-        reward = self._get_reward(portfolio)
+        reward , portfolio_change= self._get_reward(portfolio)
 
         # store for rendering
         if self._render:
-            self._past_portfolios.append(portfolio.detach().float().numpy()[0])
-            self._rewards.append(reward.detach().float().numpy()[0])
+            self._past_portfolios.append(portfolio.detach().float().numpy())
+            self._rewards.append(reward.detach().float().numpy())
         
         # store for next step
         self.old_portfolio = portfolio.detach()
         
         # output data
         info = self._get_info()
-        terminated = self._step_number >= self._max_steps_const -1
+        terminated = self._obs_index >= len(self._raw_data) - 1
         truncated = False
+
         # sanity
         self._assert_obs_shape(obs)
+
+        if self._render:
+            self._renderer.update_plots(portfolio.detach().numpy(), float(reward), portfolio_change)
+
         return obs, reward, terminated, truncated, info
     
-    def _get_reward(self, portfolio: torch.Tensor) -> torch.Tensor:
+    def _get_reward(self, portfolio: torch.Tensor) -> tuple[torch.Tensor, float]:
         """The rate of return for the time period"""
-        mu = 1 # self._get_transaction_remainder_factor(portfolio)
+        mu = self._get_transaction_remainder_factor(portfolio)
         y = self._get_price_relative_vector()
-        portfolio_change = mu * (y * portfolio).sum(dim=1)
-        if self._render:
-            self._portfolio_change.append(float(portfolio_change.detach().numpy()[0]))
+        portfolio_change = mu * torch.dot(y, portfolio)
         reward = torch.log(portfolio_change)
-        return reward #/ self._max_steps_const
+        return reward, float(portfolio_change)
     
     def _get_transaction_remainder_factor(self, portfolio: torch.Tensor):
         """The fractional cost to transition from one portfolio to another portfolio"""
@@ -201,18 +290,20 @@ class AssetTrainingEnvironment(Env):
 
     def _get_price_relative_vector(self) -> torch.Tensor:
         """Data provided is close, high and low, normalise this data wrt the final close"""
-        assert all([i > 0 for i in self._obs_index])
-        assert all([i < len(self._raw_data) for i in self._obs_index]) 
+        assert isinstance(self._obs_index, int) 
+        assert self._obs_index > self._sample_history_len
+        assert self._obs_index < len(self._raw_data)
+
 
         vt: pd.Series[random.Any] = self._raw_data.iloc[self._obs_index]['Close']
-        vtm1 = self._raw_data.iloc[[i-1 for i in self._obs_index]]['Close']
+        vtm1 = self._raw_data.iloc[self._obs_index - 1]['Close']
 
         yt = vt.values / vtm1.values
 
         return torch.concat([
-            torch.ones([len(self._obs_index),1]), 
+            torch.ones(1), 
             torch.from_numpy(yt.astype('float32'))
-            ], dim=-1).float().to(DEVICE)
+            ]).float().to(DEVICE)
     
     def reset(self, *, seed: int | None = None, options: dict | None = None) -> tuple[torch.Tensor, dict]:
         """Reset portfolio and select new starting observation time
@@ -223,10 +314,6 @@ class AssetTrainingEnvironment(Env):
         """
         self._step_number = 0
 
-        batch_size =  options.get('batch_size', 1)
-        assert isinstance(batch_size, int)
-        # self._print_info_on_raw_data(batch_size)
-
         if isinstance(seed, int):
             super().reset(seed=seed)
         
@@ -235,25 +322,12 @@ class AssetTrainingEnvironment(Env):
         self._rewards = []
         self._portfolio_change = []
 
-        # get indices that have at least self._input_period_len_const entries behind them
-        self._obs_index = options.get('obs_index')
+        self._obs_index = options.get('obs_index') if isinstance(options, dict) else None
         if self._obs_index is None:
-            self._obs_index = [
-                i + self._input_period_len_const for i in 
-                random.sample( # pick without replacement
-                    range(
-                        len(self._raw_data) - self._input_period_len_const - self._max_steps_const
-                    ) # cannot pick so early that we dont have a history, nor late we dont have an episode 
-                    , batch_size)
-                ]
+            self._obs_index = self._sample_history_len # start far enough in that we have the history
         else:
-            if isinstance(self._obs_index, int):
-                self._obs_index = [self._obs_index]
-            else:
-                assert isinstance(self._obs_index, list)
-                assert len(self._obs_index)>0
-                for i in self._obs_index:
-                    assert isinstance(i, int)
+            if not isinstance(self._obs_index, int) or self._obs_index < self._sample_history_len or self._obs_index >= len(self._raw_data):
+                assert ValueError, f'invalid observation_index in options {self._obs_index}'
         
         self._initial_obs_index = self._obs_index # to track how many steps have been taken
         obs = self._get_obs()
@@ -261,6 +335,9 @@ class AssetTrainingEnvironment(Env):
         self._assert_obs_shape(obs)
         return obs, info
     
+    def get_train_length(self) -> int:
+        return len(self._raw_data) - self._initial_obs_index
+
     def _get_obs(self) -> torch.Tensor:
         obs = self._get_subsample() # get the data ending at _obs_index
         obs = self._obs_to_normalised_obs(obs)
@@ -281,24 +358,14 @@ class AssetTrainingEnvironment(Env):
         
         subsamples shape = (Batch, Symbols, History, Features)
         """
-        assert len(self._obs_index) > 0
+        assert 0 < self._obs_index < len(self._raw_data)
 
-        # symbols, history len, features
-        S, H, F = self._symbol_data_on_device.shape
-        # batch size
-        B = len(self._obs_index)
         # sub-sample length
-        P = self._input_period_len_const
-        # future steps
-        T = self._max_steps_const
-        # how long is the subsample
-        L = P
-        
-        obs_index: torch.Tensor = torch.tensor(self._obs_index).int().to(DEVICE)
+        L = self._sample_history_len        
         # we want it in reverse order in steps of -1
-        offsets = torch.arange(L - 1, -1, -1, device=DEVICE)  # (L,)
+        offsets =  torch.arange(L - 1, -1, -1, device=DEVICE)  # (L,)
         # the indexes for each sub-sample in the batch
-        hist_idx = obs_index[:, None] - offsets[None, :]  # (B, L)
+        hist_idx = self._obs_index - offsets[None, :]  # (B, L)
         # Reshape to get the shape we want
         out = self._symbol_data_on_device[:, hist_idx, :].permute(1, 0, 2, 3)
 
@@ -307,50 +374,29 @@ class AssetTrainingEnvironment(Env):
     @contextmanager
     def render(self, mode: str = 'human'):
         self._render = True
-        yield self
-        self._render = False
-        self._make_plots()
-
-    def _make_plots(self):
-        df: pd.DataFrame = self._raw_data.set_index('Datetime').iloc[self._initial_obs_index[0]:self._initial_obs_index[0]+self._step_number+1]
-        df_port = pd.DataFrame([i for i in self._past_portfolios])
-        df_port.index = df.index
-        df_port.columns = ['cash', *self._symbols_const]
-
-        for symbol in self._symbols_const:
-            ap = mpf.make_addplot(
-                df_port[symbol],
-                type="line",
-                color="blue",
-                width=1.5
-            )
-
-            mpf.plot(
-                df.xs(symbol, axis=1, level=1), 
-                type="candle", 
-                style="charles", 
-                volume=False,
-                addplot=ap,
-                savefig=f"portfolios/1706_10059/plots/{symbol}.png"
-                )
-            plt.close()
-            
-        df_reward = pd.Series(self._rewards)
-        df_reward.index = df.index[1:]
-        ax = df_reward.plot(title="Reward Over Time")
-        fig = ax.get_figure()
-        fig.savefig("portfolios/1706_10059/plots/reward_plot.png", dpi=150, bbox_inches="tight")
-        plt.close()
-
-        ds_portfolio_factor = pd.Series([reduce(mul, self._portfolio_change[0:i], 1) for i in range(len(self._portfolio_change)+1)])
-        ds_portfolio_factor.index = df.index
-        ax = ds_portfolio_factor.plot(title='Portfolio ratio')
-        fig = ax.get_figure()
-        fig.savefig("portfolios/1706_10059/plots/portfolio_factor.png", dpi=150, bbox_inches="tight")
-        plt.close()
 
     def _get_info(self) -> dict:
         return {}
 
     def _assert_obs_shape(self, obs):
         assert obs.shape[1:] == self.observation_space.shape, 'Obs shape doesn\'t match that specified in self.observation_space'
+
+    def get_batch_sample(self, obs_idx: list[int]) -> torch.Tensor:
+        """
+        Args:
+            obs_idx (list[int]): List of indices for the end of the training samples for each env observation
+        """
+        obs_index: torch.Tensor = torch.tensor(obs_idx).int().to(DEVICE)
+        # how much history is provided as part of the observation
+        L = self._sample_history_len
+        # we want it in reverse order in steps of -1
+        offsets = torch.arange(L - 1, -1, -1, device=DEVICE)  # (L,)
+        # the indexes for each sub-sample in the batch
+        hist_idx = obs_index[:, None] - offsets[None, :]  # (B, L)
+        # Reshape to get the shape we want
+        obs_batch = self._symbol_data_on_device[:, hist_idx, :].permute(1, 0, 2, 3)
+        
+        last_close_price = obs_batch[:,:,-1,0]
+        norm_obs_batch = obs_batch / last_close_price[:, :, None, None]
+
+        return norm_obs_batch

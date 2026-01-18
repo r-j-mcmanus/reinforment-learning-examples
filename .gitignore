@@ -9,6 +9,9 @@ papers/
 videos/
 *.csv
 models/
-portfolios/1706_10059/data
-portfolios/1706_10059/plots
-portfolios/1706_10059/history
+
+2_5_SAC\video
+
+portfolios/*/data
+portfolios/*/plots
+portfolios/*/history
