@@ -29,7 +29,7 @@ class BatchedBlock(torch.nn.Module):
 
         self.net = torch.nn.Sequential(
             torch.nn.Linear(in_features, out_features),
-            torch.nn.Dropout(dropout_p),
+            #torch.nn.Dropout(dropout_p),
             torch.nn.LayerNorm(out_features),
             torch.nn.ReLU(),
             torch.nn.BatchNorm1d(out_features)

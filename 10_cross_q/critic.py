@@ -12,7 +12,7 @@ class Critic:
         observation_dim: int,
         action_dim: int, 
         *, 
-        lr = 0.005, 
+        lr = 0.001, 
         gamma = 0.99
     ):
         self._gamma = gamma

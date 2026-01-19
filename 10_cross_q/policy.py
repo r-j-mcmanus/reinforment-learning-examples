@@ -12,7 +12,7 @@ class Policy:
         action_max: float,
         action_min: float,
         *, 
-        lr = 0.005
+        lr = 0.001
     ):
         self._actor = PolicyNetwork(observation_dim, action_dim, action_max, action_min)
         self._optimizer = optim.AdamW(self._actor.parameters(), lr=lr) # target networks update differently

@@ -13,9 +13,9 @@ class CrossQ:
     """Implementing 1812.05905"""
     def __init__(self, observation_dim: int, action_dim: int, action_max: float, action_min: float,
                  *,
-                 n_steps: int = 10,
-                 batch_size: int = 100, gamma: float = 0.99, 
-                 lr: float=0.005, soft_delay: int = 2):
+                 update_to_data: int = 2,
+                 batch_size: int = 200, 
+                 lr: float=0.005, policy_delay: int = 2):
         self._policy = Policy(
             observation_dim,
             action_dim,
@@ -27,16 +27,18 @@ class CrossQ:
             action_dim
         )
         
-        self._n_steps = n_steps
         self._batch_size = batch_size
-        self._gamma = gamma
 
         self._log_alpha = torch.tensor(-5.0, requires_grad=True)
         self._target_entropy =  -action_dim # see table 1 in 1812.05905
 
-        self._soft_delay = soft_delay
-
         self._alpha_optimizer = optim.AdamW([self._log_alpha], lr=lr)
+
+        self._policy_delay = policy_delay
+        self._policy_count = 0
+
+        self._remaining_updates = 0 
+        self._update_to_data = update_to_data 
 
     @property
     def _alpha(self):
@@ -59,12 +61,18 @@ class CrossQ:
         return action.cpu().numpy()[0]
 
     def update(self, replay_memory: ReplayMemory):
-        for step in range(self._n_steps):
+        self._remaining_updates += self._update_to_data
+        
+        while self._remaining_updates > 0:
+            self._policy_count += 1
+            self._remaining_updates -= 1
+
             batch = replay_memory.sample(self._batch_size)
 
             critic_loss = self._update_critic(batch)
-            actor_loss = self._update_actor(batch)
-            self._update_alpha(batch)
+            if self._policy_count % self._policy_delay == 0:
+                actor_loss = self._update_actor(batch)
+                self._update_alpha(batch)
 
     def _update_actor(self, batch: Transition) -> float:
         observations: Tensor = batch.state

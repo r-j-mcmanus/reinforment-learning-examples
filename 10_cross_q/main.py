@@ -29,7 +29,7 @@ def run():
     logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 
-    env = gym.make('Ant-v5', render_mode='rgb_array', max_episode_steps=100)
+    env = gym.make('Ant-v5', render_mode='rgb_array', max_episode_steps=200)
     # wrap the env in the record video
     env = gym.wrappers.RecordVideo(
         env=env, 
