@@ -10,7 +10,7 @@
             "request": "launch",
             //"program": "${workspaceFolder}/src/main.py",
             //"program": "${workspaceFolder}/9_Learning_latent_dynamics_for_planning_from_pixels/main.py",
-            "program": "${workspaceFolder}/2_5_SAC/main.py",
+            "program": "${workspaceFolder}/10_cross_q/main.py",
             "console": "integratedTerminal"
         }
     ]

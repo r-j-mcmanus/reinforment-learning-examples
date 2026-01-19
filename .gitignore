@@ -7,10 +7,11 @@ __pycache__/
 *.pyo
 papers/
 videos/
+video/
+video_eps_*/
 *.csv
 models/
 
-2_5_SAC\video
 
 portfolios/*/data
 portfolios/*/plots
