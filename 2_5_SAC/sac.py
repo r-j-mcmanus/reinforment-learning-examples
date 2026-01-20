@@ -101,8 +101,8 @@ class SAC:
 
     def _get_backup(self, next_observations: Tensor , rewards: Tensor, done: Tensor) -> Tensor:
         with torch.no_grad():
-            a_p1, lop_pi_p1 = self._policy.get_action(next_observations)
+            a_p1, log_pi_p1 = self._policy.get_action(next_observations)
             q_p1 = self._critic.get_value(next_observations, a_p1, target=True)
-            backup = rewards + self._gamma * (1 - done) * q_p1 - self._alpha.detach() * lop_pi_p1
+            backup = rewards + self._gamma * (1 - done) * q_p1 - self._alpha.detach() * log_pi_p1
         return backup
     

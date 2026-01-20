@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from constants import DEVICE
-from networks.utility import RenormBatchedBlock
+from networks.utility import DropQBlock
 
 class CriticNetwork(nn.Module):
     def __init__(
@@ -17,8 +17,8 @@ class CriticNetwork(nn.Module):
 
         # Network
         self.net = nn.Sequential(
-            RenormBatchedBlock(observation_dim + action_dim, hidden_dim),
-            RenormBatchedBlock(hidden_dim, hidden_dim),
+            DropQBlock(observation_dim + action_dim, hidden_dim),
+            DropQBlock(hidden_dim, hidden_dim),
             nn.Linear(hidden_dim, 1)
         ).to(DEVICE)
 

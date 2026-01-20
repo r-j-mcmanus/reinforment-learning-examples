@@ -26,8 +26,8 @@ class Critic:
 
     def update(self, observations: Tensor, observations_p1: Tensor, rewards: Tensor, actions: Tensor, actions_p1: Tensor, lop_pi_p1: Tensor, done: Tensor, alpha: Tensor, batch_size: int) -> float:
         # joined to pass through the network in a single call
-        joined_observations = torch.concat([observations, observations_p1])
-        joined_actions = torch.concat([actions, actions_p1])
+        joined_observations = torch.cat([observations, observations_p1])
+        joined_actions = torch.cat([actions, actions_p1])
         
         # pass through once for speed
         q_joined_1: Tensor = self._critic_1(joined_observations, joined_actions)
@@ -44,7 +44,7 @@ class Critic:
 
         backup = rewards + self._gamma * (1 - done) * (q_p1 - alpha * lop_pi_p1)
 
-        loss = self._huber_loss(q_1, backup).mean() + self._huber_loss(q_2, backup).mean()
+        loss: Tensor = self._huber_loss(q_1, backup).mean() + self._huber_loss(q_2, backup).mean()
 
         self._optimizer.zero_grad()
         loss.backward() 

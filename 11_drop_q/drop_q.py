@@ -9,28 +9,31 @@ from critic import Critic
 from replay_memory import ReplayMemory, Transition
 
 
-class CrossQ:
-    """Implementing 1812.05905"""
+class DropQ:
+    """Implementing 2110.02034"""
     def __init__(self, observation_dim: int, action_dim: int, action_max: float, action_min: float,
                  *,
-                 update_to_data: int = 2,
+                 update_to_data: int = 10,
                  batch_size: int = 200, 
-                 lr: float=0.005, policy_delay: int = 2):
+                 lr: float=0.03, 
+                 policy_delay: int = 2):
         self._policy = Policy(
             observation_dim,
             action_dim,
             action_max,
-            action_min, 
+            action_min,
+            lr
         ) 
         self._critic = Critic(
             observation_dim,
-            action_dim
+            action_dim,
+            lr
         )
         
         self._batch_size = batch_size
 
         self._log_alpha = torch.tensor(-5.0, requires_grad=True)
-        self._target_entropy =  -action_dim # see table 1 in 1812.05905
+        self._target_entropy = -action_dim # see table 1 in 1812.05905
 
         self._alpha_optimizer = optim.AdamW([self._log_alpha], lr=lr)
 
@@ -41,14 +44,14 @@ class CrossQ:
         self._update_to_data = update_to_data 
 
     @property
-    def _alpha(self):
-        return self._log_alpha.exp()
+    def alpha(self):
+        return self._log_alpha.detach().exp()
 
     def _update_alpha(self, batch: Transition):
         _, log_pi = self._policy.get_action(batch.state)
 
         # Alpha loss
-        alpha_loss = -(self._log_alpha * (log_pi.detach() + self._target_entropy)).mean()
+        alpha_loss = - (self._log_alpha * (log_pi.detach() + self._target_entropy)).mean()
 
         # Optimize log_alpha
         self._alpha_optimizer.zero_grad()
@@ -62,28 +65,31 @@ class CrossQ:
 
     def update(self, replay_memory: ReplayMemory):
         self._remaining_updates += self._update_to_data
+        self._policy_count += 1
         
         while self._remaining_updates > 0:
-            self._policy_count += 1
             self._remaining_updates -= 1
 
             batch = replay_memory.sample(self._batch_size)
 
             critic_loss = self._update_critic(batch)
+        
+            actor_loss = 0
             if self._policy_count % self._policy_delay == 0:
                 actor_loss = self._update_actor(batch)
                 self._update_alpha(batch)
+                self._critic.soft_update()
+
+        return critic_loss, actor_loss
 
     def _update_actor(self, batch: Transition) -> float:
         observations: Tensor = batch.state
 
-        # we sample from the actor distribution for the action
-        # note that the previous action forms part of the state, so we pass it along with the observation
         actions, log_pi = self._policy.get_action(observations)
 
         q = self._critic.get_value(observations, actions)
         
-        loss: Tensor = (self._alpha.detach() * log_pi - q).mean()
+        loss: Tensor = (self.alpha * log_pi - q).mean()
         
         self._policy.update(loss)
 
@@ -96,13 +102,12 @@ class CrossQ:
         actions: Tensor = batch.action
         done: Tensor = batch.done
 
-
         with torch.no_grad():
             actions_p1, log_pi_p1 = self._policy.get_action(observations_p1)
 
         loss = self._critic.update(
             observations, observations_p1, rewards, actions, actions_p1, 
-            log_pi_p1, done, self._alpha.detach(), self._batch_size
+            log_pi_p1, done, self.alpha, self._batch_size
         )
 
         return loss
